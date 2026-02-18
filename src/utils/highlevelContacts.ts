@@ -30,6 +30,8 @@ export interface FirmContactData {
   firmState?: string;
   firmZipCode?: string;
   confirmationNumber: string;
+  professionalType?: string;
+  accountStatus?: string;
 }
 
 export interface ClientContactData {
@@ -126,6 +128,9 @@ export interface OrderConfirmationData {
   amountPaid: number;
   clientCount: number;
   serviceType?: 'monitoring' | 'filing' | 'mixed';
+  paymentStatus?: 'Pending' | 'Paid' | 'Failed';
+  submissionStatus?: 'Pending' | 'Processing' | 'Completed';
+  ipAddress?: string;
   clients: Array<{
     llcName: string;
     serviceType: string;
@@ -210,6 +215,15 @@ export async function createFirmContact(firmData: FirmContactData): Promise<stri
   try {
     console.log('Creating firm contact in GoHighLevel:', firmData.firmName);
     
+    const roleTagMap: Record<string, string> = {
+      cpa: 'role_cpa',
+      attorney: 'role_attorney',
+      compliance: 'role_compliance',
+      processor: 'role_processor'
+    };
+    const normalizedProfessionalType = (firmData.professionalType || '').toLowerCase();
+    const roleTag = roleTagMap[normalizedProfessionalType];
+
     const payload = {
       locationId: config.locationId,
       firstName: firmData.contactName.split(' ')[0] || firmData.firmName,
@@ -224,13 +238,17 @@ export async function createFirmContact(firmData: FirmContactData): Promise<stri
       tags: [
         'firm',
         'nylta-bulk-filing',
-        'nylta_new_account'  // Workflow trigger tag for admin approval flow
+        'nylta_new_account',
+        'bulk_status_pending_approval',
+        ...(roleTag ? [roleTag] : [])
       ],
       customFields: [
         { key: 'firm_name', field_value: firmData.firmName },
         { key: 'firm_ein', field_value: firmData.firmEIN },
         { key: 'firm_confirmation_number', field_value: firmData.confirmationNumber },
         { key: 'account_type', field_value: 'firm' },
+        { key: 'professional_type', field_value: firmData.professionalType || '' },
+        { key: 'account_status', field_value: firmData.accountStatus || 'Pending Approval' },
         { key: 'firm_city', field_value: firmData.firmCity || '' },
         { key: 'firm_state', field_value: firmData.firmState || '' }
       ]
@@ -540,7 +558,13 @@ export async function sendOrderConfirmation(orderData: OrderConfirmationData): P
       { key: 'last_order_amount', field_value: orderData.amountPaid.toString() },
       { key: 'last_order_client_count', field_value: orderData.clientCount.toString() },
       { key: 'total_orders', field_value: '1' }, // Can be incremented
-      { key: 'bulk_service_type', field_value: orderData.serviceType || 'filing' }
+      { key: 'bulk_submission_number', field_value: orderData.confirmationNumber },
+      { key: 'bulk_submission_date', field_value: orderData.submissionDate.slice(0, 10) },
+      { key: 'bulk_submission_status', field_value: orderData.submissionStatus || 'Pending' },
+      { key: 'bulk_payment_status', field_value: orderData.paymentStatus || 'Pending' },
+      { key: 'bulk_payment_amount', field_value: orderData.amountPaid.toString() },
+      { key: 'bulk_service_type', field_value: orderData.serviceType || 'filing' },
+      { key: 'bulk_ip_address', field_value: orderData.ipAddress || '' }
     ];
 
     // Determine filing type mix
@@ -553,6 +577,7 @@ export async function sendOrderConfirmation(orderData: OrderConfirmationData): P
     const submissionTags = [
       'nylta_submission_complete',       // Workflow 2 & 3 trigger
       'nylta_invoice_pending',           // Invoice workflow marker
+      'nylta_order_processing',          // Internal processing marker
       'Status: Bulk Filing Submitted',
       `Filings: ${orderData.clientCount}`,
       filingTypeTag
