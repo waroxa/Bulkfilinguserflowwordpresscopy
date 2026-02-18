@@ -1,0 +1,185 @@
+{
+  "description": "HighLevel Custom Fields for Bulk Filing System - All fields prefixed with 'Bulk_' to avoid conflicts with single filing fields",
+  "instructions": "Use the provided curl command template to create each field. After creation, organize them into the appropriate folders in HighLevel UI.",
+  "api_endpoint": "https://services.leadconnectorhq.com/locations/{LOCATION_ID}/customFields",
+  "headers": {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer {YOUR_API_KEY}",
+    "Version": "2021-07-28"
+  },
+  
+  "folders": {
+    "filing_information": {
+      "folder_name": "NYLTA | Bulk Filing | Filing Information",
+      "fields": [
+        {
+          "name": "Bulk_Filing_LLC_Legal_Name",
+          "dataType": "TEXT",
+          "placeholder": "ABC Company LLC"
+        },
+        {
+          "name": "Bulk_Filing_NY_DOS_ID",
+          "dataType": "TEXT",
+          "placeholder": "1234567"
+        },
+        {
+          "name": "Bulk_Filing_EIN",
+          "dataType": "TEXT",
+          "placeholder": "12-3456789"
+        },
+        {
+          "name": "Bulk_Filing_Formation_Date",
+          "dataType": "DATE"
+        },
+        {
+          "name": "Bulk_Filing_Country_of_Formation",
+          "dataType": "TEXT",
+          "placeholder": "United States"
+        },
+        {
+          "name": "Bulk_Filing_State_of_Formation",
+          "dataType": "TEXT",
+          "placeholder": "New York"
+        },
+        {
+          "name": "Bulk_Filing_Contact_Email",
+          "dataType": "TEXT",
+          "placeholder": "contact@company.com"
+        },
+        {
+          "name": "Bulk_Filing_ZIP_Code",
+          "dataType": "NUMERICAL",
+          "placeholder": "10001"
+        },
+        {
+          "name": "Bulk_Filing_Type",
+          "dataType": "SINGLE_OPTIONS",
+          "options": ["Beneficial Ownership Disclosure", "Claims Exemption"]
+        }
+      ]
+    },
+    
+    "company_applicants": {
+      "folder_name": "NYLTA | Bulk Filing | Company Applicants",
+      "fields": [
+        {"name": "Bulk_CA1_Full_Name", "dataType": "TEXT", "placeholder": "John Doe"},
+        {"name": "Bulk_CA1_DOB", "dataType": "DATE"},
+        {"name": "Bulk_CA1_Address", "dataType": "TEXT", "placeholder": "Street|City|State|ZIP|Country|Email"},
+        {"name": "Bulk_CA1_ID_Type", "dataType": "SINGLE_OPTIONS", "options": ["SSN", "Driver License", "Passport", "State ID", "Foreign Passport"]},
+        {"name": "Bulk_CA1_ID_Number", "dataType": "TEXT", "placeholder": "Full ID Number"},
+        {"name": "Bulk_CA1_Issuing_Country", "dataType": "TEXT", "placeholder": "United States"},
+        {"name": "Bulk_CA1_Issuing_State", "dataType": "TEXT", "placeholder": "New York"},
+        {"name": "Bulk_CA1_Role", "dataType": "TEXT", "placeholder": "Filing Agent"},
+        
+        {"name": "Bulk_CA2_Full_Name", "dataType": "TEXT", "placeholder": "Jane Smith"},
+        {"name": "Bulk_CA2_DOB", "dataType": "DATE"},
+        {"name": "Bulk_CA2_Address", "dataType": "TEXT", "placeholder": "Street|City|State|ZIP|Country|Email"},
+        {"name": "Bulk_CA2_ID_Type", "dataType": "SINGLE_OPTIONS", "options": ["SSN", "Driver License", "Passport", "State ID", "Foreign Passport"]},
+        {"name": "Bulk_CA2_ID_Number", "dataType": "TEXT", "placeholder": "Full ID Number"},
+        {"name": "Bulk_CA2_Issuing_Country", "dataType": "TEXT", "placeholder": "United States"},
+        {"name": "Bulk_CA2_Issuing_State", "dataType": "TEXT", "placeholder": "New York"},
+        {"name": "Bulk_CA2_Role", "dataType": "TEXT", "placeholder": "Filing Agent"}
+      ]
+    },
+    
+    "beneficial_owners": {
+      "folder_name": "NYLTA | Bulk Filing | Beneficial Owners",
+      "note": "Create fields for BO1 through BO9. Each has: Full_Name, DOB, Address, Address_Type, ID_Type, ID_Number, Issuing_Country, Issuing_State, Ownership_Percentage",
+      "fields": [
+        {"name": "Bulk_BO1_Full_Name", "dataType": "TEXT"},
+        {"name": "Bulk_BO1_DOB", "dataType": "DATE"},
+        {"name": "Bulk_BO1_Address", "dataType": "TEXT"},
+        {"name": "Bulk_BO1_Address_Type", "dataType": "SINGLE_OPTIONS", "options": ["Residential", "Business"]},
+        {"name": "Bulk_BO1_ID_Type", "dataType": "SINGLE_OPTIONS", "options": ["SSN", "Driver License", "Passport", "State ID", "Foreign Passport"]},
+        {"name": "Bulk_BO1_ID_Number", "dataType": "TEXT", "placeholder": "Full ID Number"},
+        {"name": "Bulk_BO1_Issuing_Country", "dataType": "TEXT", "placeholder": "United States"},
+        {"name": "Bulk_BO1_Issuing_State", "dataType": "TEXT", "placeholder": "New York"},
+        {"name": "Bulk_BO1_Ownership_Percentage", "dataType": "NUMERICAL", "placeholder": "25"},
+        
+        {"name": "Bulk_BO2_Full_Name", "dataType": "TEXT"},
+        {"name": "Bulk_BO2_DOB", "dataType": "DATE"},
+        {"name": "Bulk_BO2_Address", "dataType": "TEXT"},
+        {"name": "Bulk_BO2_Address_Type", "dataType": "SINGLE_OPTIONS", "options": ["Residential", "Business"]},
+        {"name": "Bulk_BO2_ID_Type", "dataType": "SINGLE_OPTIONS", "options": ["SSN", "Driver License", "Passport", "State ID", "Foreign Passport"]},
+        {"name": "Bulk_BO2_ID_Number", "dataType": "TEXT", "placeholder": "Full ID Number"},
+        {"name": "Bulk_BO2_Issuing_Country", "dataType": "TEXT"},
+        {"name": "Bulk_BO2_Issuing_State", "dataType": "TEXT"},
+        {"name": "Bulk_BO2_Ownership_Percentage", "dataType": "NUMERICAL"},
+        
+        {"name": "Bulk_BO3_Full_Name", "dataType": "TEXT"},
+        {"name": "Bulk_BO3_DOB", "dataType": "DATE"},
+        {"name": "Bulk_BO3_ID_Number", "dataType": "TEXT"},
+        {"name": "Bulk_BO3_Ownership_Percentage", "dataType": "NUMERICAL"},
+        
+        {"name": "Bulk_BO4_Full_Name", "dataType": "TEXT"},
+        {"name": "Bulk_BO4_DOB", "dataType": "DATE"},
+        {"name": "Bulk_BO4_ID_Number", "dataType": "TEXT"},
+        {"name": "Bulk_BO4_Ownership_Percentage", "dataType": "NUMERICAL"}
+      ]
+    },
+    
+    "exemptions": {
+      "folder_name": "NYLTA | Bulk Filing | Exemptions",
+      "fields": [
+        {
+          "name": "Bulk_Exemption_Category",
+          "dataType": "SINGLE_OPTIONS",
+          "options": [
+            "Securities reporting issuer",
+            "Governmental authority",
+            "Bank",
+            "Credit union",
+            "Depository institution holding company",
+            "Money services business",
+            "Broker or dealer in securities",
+            "Securities exchange or clearing agency",
+            "Other Exchange Act registered entity",
+            "Investment company or investment adviser",
+            "Venture capital fund adviser",
+            "Insurance company",
+            "State-licensed insurance producer",
+            "Commodity Exchange Act registered entity",
+            "Accounting firm",
+            "Public utility",
+            "Financial market utility",
+            "Pooled investment vehicle",
+            "Tax-exempt entity",
+            "Entity assisting a tax-exempt entity",
+            "Large operating company",
+            "Subsidiary of certain exempt entities",
+            "Inactive entity"
+          ]
+        },
+        {
+          "name": "Bulk_Exemption_Explanation",
+          "dataType": "LARGE_TEXT",
+          "placeholder": "Provide detailed explanation and supporting facts..."
+        }
+      ]
+    },
+    
+    "submissions": {
+      "folder_name": "NYLTA | Bulk Filing | Submissions",
+      "fields": [
+        {"name": "Bulk_Submission_Date", "dataType": "DATE"},
+        {"name": "Bulk_Total_Amount", "dataType": "NUMERICAL", "placeholder": "0"},
+        {"name": "Bulk_Number_of_Filings", "dataType": "NUMERICAL", "placeholder": "0"},
+        {"name": "Bulk_Payment_Status", "dataType": "SINGLE_OPTIONS", "options": ["Pending", "Paid", "Processing", "Complete", "Failed"]},
+        {"name": "Bulk_Confirmation_Number", "dataType": "TEXT"},
+        {"name": "Bulk_Payment_Method", "dataType": "SINGLE_OPTIONS", "options": ["ACH", "Credit Card", "Wire Transfer"]},
+        {"name": "Bulk_Processing_Notes", "dataType": "LARGE_TEXT"}
+      ]
+    },
+    
+    "others": {
+      "folder_name": "NYLTA | Bulk Filing | Others",
+      "fields": [
+        {"name": "Bulk_Filing_Notes", "dataType": "LARGE_TEXT", "placeholder": "Additional notes..."},
+        {"name": "Bulk_Processing_Status", "dataType": "SINGLE_OPTIONS", "options": ["Uploaded", "Validated", "Submitted", "Complete", "Error"]},
+        {"name": "Bulk_Processor_Name", "dataType": "TEXT"}
+      ]
+    }
+  },
+  
+  "curl_template": "curl --location 'https://services.leadconnectorhq.com/locations/{LOCATION_ID}/customFields' --header 'Content-Type: application/json' --header 'Authorization: Bearer {API_KEY}' --header 'Version: 2021-07-28' --data '{FIELD_JSON}'"
+}

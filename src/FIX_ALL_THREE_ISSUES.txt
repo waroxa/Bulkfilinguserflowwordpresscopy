@@ -1,0 +1,295 @@
+===========================================
+COMPLETE FIX FOR ALL THREE ISSUES
+===========================================
+
+ISSUE 1: DATA COMPLETE STATUS NOT UPDATING
+ISSUE 2: NO VALIDATION FOR REQUIRED FIELDS
+ISSUE 3: CSV HAS ONLY 10 EXAMPLES, NEED 26
+
+===========================================
+FIX 1: UPDATE DATA COMPLETE STATUS
+===========================================
+
+File: /components/Step3BeneficialOwners.tsx
+
+FIND the handleSaveAndContinue function (around line 240-270)
+
+ADD this validation function BEFORE handleSaveAndContinue:
+
+```typescript
+// Validate that all required BO fields are complete
+const validateBeneficialOwners = (): boolean => {
+  const errors: string[] = [];
+  
+  beneficialOwners.forEach((owner, index) => {
+    const missing: string[] = [];
+    
+    if (!owner.fullName?.trim()) missing.push('Full Name');
+    if (!owner.dob) missing.push('Date of Birth');
+    
+    // Parse address
+    const [street, city, state, zip, country] = owner.address?.split('|') || [];
+    if (!street?.trim()) missing.push('Street Address');
+    if (!city?.trim()) missing.push('City');
+    if (!state?.trim()) missing.push('State');
+    if (!zip?.trim()) missing.push('ZIP Code');
+    if (!country?.trim()) missing.push('Country');
+    
+    if (!owner.idType) missing.push('ID Type');
+    if (!owner.idNumber?.trim()) missing.push('ID Number');
+    if (!owner.idIssuingCountry) missing.push('ID Issuing Country');
+    if (owner.idIssuingCountry === 'United States' && !owner.idIssuingState) {
+      missing.push('ID Issuing State');
+    }
+    if (!owner.ownershipPercentage || parseFloat(owner.ownershipPercentage) <= 0) {
+      missing.push('Ownership %');
+    }
+    
+    if (missing.length > 0) {
+      errors.push(`Beneficial Owner ${index + 1} is missing:\n  • ${missing.join('\n  • ')}`);
+    }
+  });
+  
+  if (errors.length > 0) {
+    alert(`❌ Please complete all required fields (*)\n\n${errors.join('\n\n')}`);
+    return false;
+  }
+  
+  return true;
+};
+```
+
+THEN UPDATE handleSaveAndContinue to:
+
+```typescript
+const handleSaveAndContinue = () => {
+  // Validate all required fields
+  if (!validateBeneficialOwners()) {
+    return;
+  }
+  
+  // Check if all required BO fields are complete
+  const allBOComplete = beneficialOwners.every(bo => {
+    const [street, city, state, zip, country] = bo.address?.split('|') || [];
+    return (
+      bo.fullName?.trim() &&
+      bo.dob &&
+      street?.trim() &&
+      city?.trim() &&
+      state?.trim() &&
+      zip?.trim() &&
+      country?.trim() &&
+      bo.idType &&
+      bo.idNumber?.trim() &&
+      bo.idIssuingCountry &&
+      (bo.idIssuingCountry !== 'United States' || bo.idIssuingState) &&
+      bo.ownershipPercentage &&
+      parseFloat(bo.ownershipPercentage) > 0
+    );
+  });
+  
+  const updatedClients = clients.map(c => {
+    if (c.id === client.id) {
+      return {
+        ...c,
+        beneficialOwners,
+        dataComplete: allBOComplete // ⭐ UPDATE STATUS
+      };
+    }
+    return c;
+  });
+  
+  onUpdateClients(updatedClients);
+  onNext();
+};
+```
+
+===========================================
+FIX 2: ADD VALIDATION TO MANUAL ENTRY
+===========================================
+
+File: /components/Step2ClientUpload.tsx
+
+FIND the handleAddManualEntry function (around line 500-550)
+
+REPLACE the entire function with:
+
+```typescript
+const handleAddManualEntry = () => {
+  // ⭐ VALIDATE ALL REQUIRED FIELDS
+  const errors: string[] = [];
+  
+  if (!manualEntry.llcName?.trim()) {
+    errors.push('LLC Legal Name*');
+  }
+  
+  if (!manualEntry.nydosId?.trim()) {
+    errors.push('NY DOS ID*');
+  }
+  
+  if (!manualEntry.formationDate) {
+    errors.push('Formation Date*');
+  }
+  
+  if (!manualEntry.contactEmail?.trim()) {
+    errors.push('Contact Email*');
+  } else {
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(manualEntry.contactEmail)) {
+      errors.push('Contact Email* (invalid format)');
+    }
+  }
+  
+  if (!manualEntry.countryOfFormation?.trim()) {
+    errors.push('Country of Formation*');
+  }
+  
+  // If USA, state is required
+  if (manualEntry.countryOfFormation === 'United States' && !manualEntry.stateOfFormation?.trim()) {
+    errors.push('State* (required for USA entities)');
+  }
+  
+  if (!manualEntry.filingType) {
+    errors.push('Filing Type* (disclosure or exemption)');
+  }
+  
+  if (errors.length > 0) {
+    alert(`❌ Please complete all required fields:\n\n  • ${errors.join('\n  • ')}`);
+    return;
+  }
+
+  // AUTO-DETECT: Determine entity type based on country of formation
+  const countryOfFormation = manualEntry.countryOfFormation || "United States";
+  const entityType = countryOfFormation === "United States" ? "domestic" : "foreign";
+  
+  // AUTO-SET SERVICE LEVEL based on country
+  const serviceType: "monitoring" | "filing" = entityType === "foreign" ? "filing" : "monitoring";
+
+  const newClient: Client = {
+    id: `client-${Date.now()}`,
+    llcName: manualEntry.llcName,
+    nydosId: manualEntry.nydosId || "",
+    ein: manualEntry.ein || "",
+    formationDate: manualEntry.formationDate,
+    countryOfFormation: countryOfFormation,
+    stateOfFormation: manualEntry.stateOfFormation || "",
+    zipCode: manualEntry.zipCode || "",
+    contactEmail: manualEntry.contactEmail || "",
+    filingType: manualEntry.filingType || "disclosure",
+    entityType: entityType,
+    serviceType: serviceType,
+    dataComplete: false
+  };
+
+  setClients([...clients, newClient]);
+  setManualEntry({
+    llcName: "",
+    nydosId: "",
+    ein: "",
+    formationDate: "",
+    countryOfFormation: "United States",
+    stateOfFormation: "",
+    zipCode: "",
+    contactEmail: "",
+    filingType: "disclosure"
+  });
+  setEinStatus("have-ein");
+};
+```
+
+===========================================
+FIX 3: UPDATE CSV TO 26 COMPLETE EXAMPLES
+===========================================
+
+File: /components/Step2ClientUpload.tsx
+
+FIND the section where example data rows are created (around line 700-900)
+
+The exampleData array needs 26 rows instead of 10.
+
+Here are the 26 complete examples to replace the existing examples:
+
+```typescript
+const exampleData = [
+  // ========================================
+  // ROWS 1-13: DISCLOSURE (Beneficial Ownership) - DOMESTIC
+  // ========================================
+  ['Acme Manufacturing LLC', '', '1234567', '12-3456789', '2020-01-15', 'United States', 'New York', '', 'contact@acme.com', 'disclosure', 'monitoring', 'John Smith', '1985-03-20', '123 Main St|New York|New York|10001|United States', 'Passport', 'AB123456', 'United States', 'New York', 'XXX-XX-1234', 'Founder', '', '', '', '', '', '', '', 'Maria Garcia', '1990-06-15', '456 Oak Ave|Brooklyn|New York|11201|United States', 'Driver License', 'DL789012', 'United States', 'New York', '25', 'Co-Owner', '', '', '', '', '', '', '', ''],
+  
+  ['Brooklyn Tech Services LLC', 'BK Tech', '2345678', '23-4567890', '2019-05-10', 'United States', 'New York', '', 'admin@bktech.com', 'disclosure', 'monitoring', 'David Chen', '1988-07-12', '789 Tech Blvd|Brooklyn|New York|11215|United States', 'State ID', 'NY456789', 'United States', 'New York', 'XXX-XX-2345', 'CEO', '', '', '', '', '', '', '', 'Sarah Johnson', '1992-11-25', '321 Park Ave|Manhattan|New York|10022|United States', 'Passport', 'CD987654', 'United States', 'New York', '30', 'CFO', 'Robert Williams', '1987-04-18', '555 Madison Ave|New York|New York|10036|United States', 'Driver License', 'DL234567', 'United States', 'New York', '20', 'CTO'],
+  
+  ['Manhattan Consulting Group LLC', '', '3456789', '34-5678901', '2021-03-22', 'United States', 'New York', '', 'info@manhattanconsult.com', 'disclosure', 'monitoring', 'Jennifer Lee', '1986-09-30', '100 Wall St|New York|New York|10005|United States', 'Passport', 'EF112233', 'United States', 'New York', 'XXX-XX-3456', 'Managing Partner', '', '', '', '', '', '', '', 'Michael Brown', '1989-12-08', '200 Broadway|New York|New York|10007|United States', 'State ID', 'NY678901', 'United States', 'New York', '50', 'Partner', '', '', '', '', '', '', '', ''],
+  
+  ['Queens Real Estate Holdings LLC', '', '4567890', '45-6789012', '2018-11-05', 'United States', 'New York', '', 'holdings@queensre.com', 'disclosure', 'monitoring', 'Thomas Anderson', '1975-02-14', '444 Queens Blvd|Queens|New York|11373|United States', 'Driver License', 'DL890123', 'United States', 'New York', 'XXX-XX-4567', 'Principal Owner', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+  
+  ['Staten Island Logistics LLC', 'SI Transport', '5678901', '56-7890123', '2020-07-18', 'United States', 'New York', '', 'logistics@silogistics.com', 'disclosure', 'monitoring', 'Patricia Martinez', '1983-05-22', '777 Richmond Ave|Staten Island|New York|10314|United States', 'Passport', 'GH445566', 'United States', 'New York', 'XXX-XX-5678', 'Owner', '', '', '', '', '', '', '', 'James Wilson', '1991-08-16', '888 Victory Blvd|Staten Island|New York|10301|United States', 'State ID', 'NY123456', 'United States', 'New York', '35', 'Operations Manager', '', '', '', '', '', '', '', ''],
+  
+  ['Bronx Healthcare Partners LLC', '', '6789012', '67-8901234', '2019-09-12', 'United States', 'New York', '', 'partners@bronxhealthcare.com', 'disclosure', 'monitoring', 'Dr. Lisa Thompson', '1980-01-30', '999 Grand Concourse|Bronx|New York|10451|United States', 'Driver License', 'DL345678', 'United States', 'New York', 'XXX-XX-6789', 'Medical Director', '', '', '', '', '', '', '', 'Dr. Kevin Rodriguez', '1985-06-24', '111 Fordham Rd|Bronx|New York|10458|United States', 'Passport', 'IJ778899', 'United States', 'New York', '40', 'Partner', '', '', '', '', '', '', '', ''],
+  
+  ['Long Island Development LLC', 'LI Dev', '7890123', '78-9012345', '2021-02-28', 'United States', 'New York', '', 'development@lidev.com', 'disclosure', 'monitoring', 'Christopher Davis', '1978-10-05', '222 Northern Blvd|Great Neck|New York|11021|United States', 'State ID', 'NY789012', 'United States', 'New York', 'XXX-XX-7890', 'Developer', '', '', '', '', '', '', '', 'Amanda White', '1987-03-17', '333 Jericho Tpke|Syosset|New York|11791|United States', 'Driver License', 'DL456789', 'United States', 'New York', '45', 'Co-Developer', '', '', '', '', '', '', '', ''],
+  
+  ['Buffalo Manufacturing Solutions LLC', '', '8901234', '89-0123456', '2020-04-09', 'United States', 'New York', '', 'solutions@buffalomfg.com', 'disclosure', 'monitoring', 'Daniel Harris', '1982-07-19', '444 Main St|Buffalo|New York|14202|United States', 'Passport', 'KL990011', 'United States', 'New York', 'XXX-XX-8901', 'President', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+  
+  ['Rochester Tech Innovations LLC', 'ROC Tech', '9012345', '90-1234567', '2019-12-15', 'United States', 'New York', '', 'innovation@roctech.com', 'disclosure', 'monitoring', 'Emily Clark', '1984-11-28', '555 East Ave|Rochester|New York|14607|United States', 'Driver License', 'DL567890', 'United States', 'New York', 'XXX-XX-9012', 'Founder', '', '', '', '', '', '', '', 'Matthew Lewis', '1990-02-11', '666 Park Ave|Rochester|New York|14620|United States', 'State ID', 'NY890123', 'United States', 'New York', '28', 'CTO', '', '', '', '', '', '', '', ''],
+  
+  ['Syracuse Business Ventures LLC', '', '0123456', '01-2345678', '2021-06-03', 'United States', 'New York', '', 'ventures@syracusebiz.com', 'disclosure', 'monitoring', 'Nicholas Young', '1986-04-07', '777 S Salina St|Syracuse|New York|13202|United States', 'Passport', 'MN112233', 'United States', 'New York', 'XXX-XX-0123', 'Managing Member', '', '', '', '', '', '', '', 'Olivia King', '1993-09-21', '888 Erie Blvd|Syracuse|New York|13204|United States', 'Driver License', 'DL678901', 'United States', 'New York', '32', 'Partner', '', '', '', '', '', '', '', ''],
+  
+  // ========================================
+  // ROWS 11-13: DISCLOSURE - FOREIGN ENTITIES
+  // ========================================
+  ['Toronto Consulting Services LLC', '', '1234568', '12-3456788', '2020-03-15', 'Canada', '', '2020-08-20', 'contact@torontoconsult.com', 'disclosure', 'filing', 'Sophie Dubois', '1987-06-12', '100 King St W|Toronto|Ontario|M5H 1A1|Canada', 'Passport', 'CA123456', 'Canada', '', 'N/A', 'Director', '', '', '', '', '', '', '', 'Pierre Leclerc', '1989-09-25', '200 Bay St|Toronto|Ontario|M5J 2J1|Canada', 'Driver License', 'ON789012', 'Canada', '', '40', 'Co-Director', '', '', '', '', '', '', '', ''],
+  
+  ['London Investment Holdings LLC', 'LIH', '2345679', '23-4567899', '2019-07-22', 'United Kingdom', '', '2021-01-10', 'holdings@londoninvest.com', 'disclosure', 'filing', 'Oliver Smith', '1982-11-08', '1 Canary Wharf|London||E14 5AB|United Kingdom', 'Passport', 'GB987654', 'United Kingdom', '', 'N/A', 'Managing Director', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+  
+  ['Munich Tech Solutions LLC', '', '3456780', '34-5678900', '2021-05-18', 'Germany', '', '2022-03-05', 'tech@munichsolutions.com', 'disclosure', 'filing', 'Klaus Mueller', '1985-02-28', 'Marienplatz 8|Munich|Bavaria|80331|Germany', 'Passport', 'DE445566', 'Germany', '', 'N/A', 'CEO', '', '', '', '', '', '', '', 'Anna Schmidt', '1990-07-14', 'Leopoldstr 50|Munich|Bavaria|80802|Germany', 'National ID', 'DE778899', 'Germany', '', '35', 'CFO', '', '', '', '', '', '', '', ''],
+  
+  // ========================================
+  // ROWS 14-23: EXEMPTION - DOMESTIC
+  // ========================================
+  ['Empire State Bank LLC', '', '4567891', '45-6789013', '2018-01-10', 'United States', 'New York', '', 'compliance@empirestatebank.com', 'exemption', 'monitoring', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Regulated financial institution', 'Empire State Bank LLC is a state-chartered bank regulated by the New York Department of Financial Services (NYDFS) and the Federal Reserve. As a depository institution, we are exempt under 31 CFR 1010.380(b)(2)(i).'],
+  
+  ['MetLife Insurance Holdings LLC', '', '5678902', '56-7890124', '2017-05-15', 'United States', 'New York', '', 'compliance@metlifehold.com', 'exemption', 'monitoring', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Regulated insurance company', 'MetLife Insurance Holdings LLC is licensed and regulated by the New York Department of Financial Services as an insurance company. We are exempt under 31 CFR 1010.380(b)(2)(ii).'],
+  
+  ['NYSE Trading Services LLC', '', '6789013', '67-8901235', '2016-09-20', 'United States', 'New York', '', 'legal@nysetrading.com', 'exemption', 'monitoring', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Securities exchange', 'NYSE Trading Services LLC is a broker-dealer registered with the SEC and FINRA. As a registered securities exchange or clearing agency, we are exempt under 31 CFR 1010.380(b)(2)(iii).'],
+  
+  ['Goldman Sachs Asset Management LLC', '', '7890124', '78-9012346', '2015-03-12', 'United States', 'New York', '', 'compliance@gsamllc.com', 'exemption', 'monitoring', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'SEC-registered investment adviser', 'Goldman Sachs Asset Management LLC is registered with the Securities and Exchange Commission as an investment adviser under the Investment Advisers Act of 1940. We are exempt under 31 CFR 1010.380(b)(2)(iv).'],
+  
+  ['BlackRock Investment Funds LLC', '', '8901235', '89-0123457', '2014-11-08', 'United States', 'New York', '', 'legal@blackrockfunds.com', 'exemption', 'monitoring', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Investment company', 'BlackRock Investment Funds LLC is a venture capital fund adviser that has elected to be examined by the SEC. We are exempt as a pooled investment vehicle under 31 CFR 1010.380(b)(2)(v).'],
+  
+  ['Vanguard Index Funds LLC', '', '9012346', '90-1234568', '2013-07-25', 'United States', 'New York', '', 'compliance@vanguardindex.com', 'exemption', 'monitoring', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Investment company', 'Vanguard Index Funds LLC is an investment company registered with the SEC under the Investment Company Act of 1940. We are exempt under 31 CFR 1010.380(b)(2)(vi).'],
+  
+  ['Fidelity Retirement Services LLC', '', '0123457', '01-2345679', '2019-02-14', 'United States', 'New York', '', 'legal@fidelityretire.com', 'exemption', 'monitoring', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Pension plan', 'Fidelity Retirement Services LLC is a tax-exempt entity that is an organization described in 501(c) of the Internal Revenue Code and the beneficial ownership information has been provided to the IRS. We are exempt under 31 CFR 1010.380(b)(2)(vii).'],
+  
+  ['Morgan Stanley Capital LLC', '', '1234579', '12-3456790', '2018-06-30', 'United States', 'New York', '', 'compliance@mscapital.com', 'exemption', 'monitoring', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Large operating company', 'Morgan Stanley Capital LLC is a large operating company with more than 20 full-time employees in the United States, an operating presence at a physical office in the US, and filed a Federal income tax return demonstrating more than $5,000,000 in gross receipts or sales. We are exempt under 31 CFR 1010.380(b)(2)(viii).'],
+  
+  ['JPMorgan Business Holdings LLC', '', '2345680', '23-4567801', '2017-10-18', 'United States', 'New York', '', 'legal@jpmholdings.com', 'exemption', 'monitoring', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Subsidiary of large operating company', 'JPMorgan Business Holdings LLC is wholly owned by JPMorgan Chase & Co., a large operating company that meets all criteria under 31 CFR 1010.380(b)(2)(viii). We are exempt as a subsidiary under 31 CFR 1010.380(b)(2)(ix).'],
+  
+  ['Citigroup Operations LLC', '', '3456781', '34-5678902', '2016-04-22', 'United States', 'New York', '', 'compliance@citigroupops.com', 'exemption', 'monitoring', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Subsidiary of exempt entity', 'Citigroup Operations LLC is controlled by Citigroup Inc., a publicly traded company listed on the New York Stock Exchange. As a subsidiary of an exempt entity, we are exempt under 31 CFR 1010.380(b)(2)(xx).'],
+  
+  // ========================================
+  // ROWS 24-26: EXEMPTION - FOREIGN (To test volume discounts)
+  // ========================================
+  ['Toronto Financial Services LLC', '', '4567892', '45-6789014', '2020-08-15', 'Canada', '', '2021-02-10', 'compliance@torontofinancial.com', 'exemption', 'filing', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Foreign pooled investment vehicle', 'Toronto Financial Services LLC is a Canadian pooled investment vehicle that would be a reporting company under Section 13 or 15(d) of the Securities Exchange Act if it were a US company. We are exempt under 31 CFR 1010.380(b)(2)(xxi).'],
+  
+  ['London Property Management LLC', '', '5678903', '56-7890125', '2019-11-20', 'United Kingdom', '', '2020-06-15', 'legal@londonpropmgmt.com', 'exemption', 'filing', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Subsidiary of foreign exempt entity', 'London Property Management LLC is wholly owned by London Property Holdings PLC, a company publicly traded on the London Stock Exchange. As a subsidiary of a foreign reporting company, we are exempt under 31 CFR 1010.380(b)(2)(xxi).'],
+  
+  ['Berlin Tech Ventures LLC', '', '6789014', '67-8901236', '2021-01-05', 'Germany', '', '2021-09-20', 'compliance@berlintechventures.com', 'exemption', 'filing', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', 'Foreign regulated entity', 'Berlin Tech Ventures LLC is a wholly-owned subsidiary of Deutsche Bank AG, a German bank regulated by the Federal Financial Supervisory Authority (BaFin). We are exempt as a subsidiary of a foreign regulated financial institution under 31 CFR 1010.380(b)(2)(i).']
+];
+```
+
+===========================================
+SUMMARY OF CHANGES
+===========================================
+
+1. ✅ Data Complete Status: Now updates when BO/CA data is saved
+2. ✅ Required Field Validation: Added to manual entry and BO forms
+3. ✅ CSV Template: Now has 26 complete examples (13 disclosure + 13 exemption)
+
+TESTING THE FIXES:
+- Add a client manually without filling all required fields → Should show validation error
+- Complete BO data for a client → Status should change to "Data Complete: ✓ Yes"
+- Download CSV template → Should have 26 rows with all data filled
+- Upload 26 rows → Should trigger Tier 2 volume discount for foreign entities
+
+===========================================

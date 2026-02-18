@@ -1,0 +1,282 @@
+// MANAGER ENDPOINTS - Add these to /supabase/functions/server/index.tsx before Deno.serve(app.fetch);
+
+// ========================
+// MANAGER ENDPOINTS
+// ========================
+
+/**
+ * Get all employees created by manager
+ * Manager role required
+ */
+app.get("/make-server-2c01e603/manager/employees", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Check if user is manager
+    const managerAccount = await kv.get(`account:${user.id}`);
+    if (!managerAccount || managerAccount.role !== 'manager') {
+      return c.json({ error: 'Forbidden: Manager access required' }, 403);
+    }
+
+    // Get all employees (account_type = 'employee')
+    const allAccounts = await kv.getByPrefix('account:');
+    const employees = allAccounts
+      .filter(account => 
+        typeof account === 'object' && 
+        account !== null && 
+        account.accountType === 'employee' &&
+        account.userId // Only accounts with userId
+      )
+      .map(account => ({
+        userId: account.userId,
+        email: account.email,
+        firstName: account.firstName,
+        lastName: account.lastName,
+        phone: account.phone || '',
+        role: account.role,
+        accountType: account.accountType,
+        status: account.status,
+        createdBy: account.createdBy,
+        createdAt: account.createdAt,
+        assignedSubmissions: 0,
+        completedSubmissions: 0
+      }));
+
+    return c.json({ success: true, employees });
+
+  } catch (error) {
+    console.error('Error fetching employees:', error);
+    return c.json({ error: 'Internal server error while fetching employees' }, 500);
+  }
+});
+
+/**
+ * Create employee account
+ * Manager role required
+ */
+app.post("/make-server-2c01e603/manager/create-employee", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Check if user is manager
+    const managerAccount = await kv.get(`account:${user.id}`);
+    if (!managerAccount || managerAccount.role !== 'manager') {
+      return c.json({ error: 'Forbidden: Manager access required' }, 403);
+    }
+
+    const { firstName, lastName, email, phone, password } = await c.req.json();
+
+    // Validate required fields
+    if (!firstName || !lastName || !email || !password) {
+      return c.json({ error: 'Missing required fields' }, 400);
+    }
+
+    // Check if email already exists
+    const existingAccount = await kv.get(`email:${email.toLowerCase()}`);
+    if (existingAccount) {
+      return c.json({ error: 'Email already in use' }, 400);
+    }
+
+    // Create Supabase auth user
+    const { data: authData, error: createError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      user_metadata: {
+        firstName,
+        lastName,
+        phone,
+        role: 'processor_filer',
+        accountType: 'employee',
+        createdBy: user.id
+      },
+      email_confirm: true
+    });
+
+    if (createError) {
+      console.error('Error creating employee auth user:', createError);
+      return c.json({ error: createError.message }, 400);
+    }
+
+    const employeeUserId = authData.user.id;
+
+    // Create employee account in KV store
+    const employeeAccount = {
+      userId: employeeUserId,
+      email: email.toLowerCase(),
+      firstName,
+      lastName,
+      phone: phone || '',
+      role: 'processor_filer',
+      accountType: 'employee',
+      createdBy: user.id,
+      createdByName: `${managerAccount.firstName} ${managerAccount.lastName}`,
+      status: 'active',
+      isFirstLogin: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // Save employee account
+    await kv.set(`account:${employeeUserId}`, employeeAccount);
+    await kv.set(`email:${email.toLowerCase()}`, employeeUserId);
+
+    console.log(`✅ Employee account created: ${email} by manager ${user.id}`);
+
+    return c.json({ 
+      success: true, 
+      employee: {
+        ...employeeAccount,
+        assignedSubmissions: 0,
+        completedSubmissions: 0
+      }
+    });
+
+  } catch (error) {
+    console.error('Error creating employee:', error);
+    return c.json({ error: 'Internal server error while creating employee' }, 500);
+  }
+});
+
+/**
+ * Get all submissions for manager view
+ * Manager role required
+ */
+app.get("/make-server-2c01e603/manager/submissions", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Check if user is manager
+    const managerAccount = await kv.get(`account:${user.id}`);
+    if (!managerAccount || managerAccount.role !== 'manager') {
+      return c.json({ error: 'Forbidden: Manager access required' }, 403);
+    }
+
+    // Get all submissions from payments
+    const allPayments = await kv.getByPrefix('payment:');
+    const submissions = await Promise.all(
+      allPayments
+        .filter(payment => 
+          typeof payment === 'object' && 
+          payment !== null &&
+          payment.submissionNumber
+        )
+        .map(async (payment) => {
+          // Get assignment info
+          const assignment = await kv.get(`assignment:${payment.submissionNumber}`);
+          
+          return {
+            id: payment.submissionNumber,
+            firmName: payment.firmName,
+            confirmationNumber: payment.submissionNumber,
+            clientCount: payment.clientCount,
+            totalAmount: payment.amountPaid,
+            submittedDate: payment.createdAt || payment.timestamp || new Date().toISOString(),
+            status: payment.paymentStatus || 'pending',
+            assignedTo: assignment?.employeeId || null,
+            assignedToName: assignment?.employeeName || null
+          };
+        })
+    );
+
+    return c.json({ success: true, submissions });
+
+  } catch (error) {
+    console.error('Error fetching submissions:', error);
+    return c.json({ error: 'Internal server error while fetching submissions' }, 500);
+  }
+});
+
+/**
+ * Assign submission to employee
+ * Manager role required
+ */
+app.post("/make-server-2c01e603/manager/assign-submission", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Check if user is manager
+    const managerAccount = await kv.get(`account:${user.id}`);
+    if (!managerAccount || managerAccount.role !== 'manager') {
+      return c.json({ error: 'Forbidden: Manager access required' }, 403);
+    }
+
+    const { submissionId, employeeId } = await c.req.json();
+
+    if (!submissionId || !employeeId) {
+      return c.json({ error: 'Missing submissionId or employeeId' }, 400);
+    }
+
+    // Get employee account
+    const employeeAccount = await kv.get(`account:${employeeId}`);
+    if (!employeeAccount || employeeAccount.accountType !== 'employee') {
+      return c.json({ error: 'Invalid employee ID' }, 400);
+    }
+
+    // Create assignment
+    const assignment = {
+      submissionId,
+      employeeId,
+      employeeName: `${employeeAccount.firstName} ${employeeAccount.lastName}`,
+      assignedBy: user.id,
+      assignedByName: `${managerAccount.firstName} ${managerAccount.lastName}`,
+      assignedAt: new Date().toISOString(),
+      status: 'assigned'
+    };
+
+    // Save assignment
+    await kv.set(`assignment:${submissionId}`, assignment);
+
+    // Also add to employee's assignments list
+    const employeeAssignments = await kv.get(`employee_assignments:${employeeId}`) || [];
+    employeeAssignments.push(submissionId);
+    await kv.set(`employee_assignments:${employeeId}`, employeeAssignments);
+
+    console.log(`✅ Submission ${submissionId} assigned to employee ${employeeId}`);
+
+    return c.json({ success: true, assignment });
+
+  } catch (error) {
+    console.error('Error assigning submission:', error);
+    return c.json({ error: 'Internal server error while assigning submission' }, 500);
+  }
+});

@@ -1,0 +1,422 @@
+// DATABASE AUDIT ENDPOINTS - Add these to /supabase/functions/server/index.tsx before Deno.serve(app.fetch);
+
+// ========================
+// DATABASE AUDIT ENDPOINTS
+// ========================
+
+/**
+ * Run comprehensive database audit
+ * Admin only
+ */
+app.get("/make-server-2c01e603/admin/database-audit", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Check if user is admin
+    const adminAccount = await kv.get(`account:${user.id}`);
+    if (!adminAccount || adminAccount.role !== 'admin') {
+      return c.json({ error: 'Forbidden: Admin access required' }, 403);
+    }
+
+    console.log('🔍 Running comprehensive database audit...');
+
+    // Get ALL keys from database
+    const allData = await kv.getByPrefix('');
+    console.log(`📊 Total keys in database: ${allData.length}`);
+
+    // Define critical data categories
+    const categories = [
+      { 
+        name: 'Firm Accounts', 
+        prefix: 'account:', 
+        icon: 'Users',
+        color: 'bg-blue-600',
+        critical: true,
+        validator: (item: any) => item.userId && item.email && item.firmName
+      },
+      { 
+        name: 'Email Index', 
+        prefix: 'email:', 
+        icon: 'Mail',
+        color: 'bg-green-600',
+        critical: true,
+        validator: (item: any) => typeof item === 'string' // Should be userId
+      },
+      { 
+        name: 'Payments', 
+        prefix: 'payment:', 
+        icon: 'CreditCard',
+        color: 'bg-yellow-600',
+        critical: true,
+        validator: (item: any) => item.submissionNumber && item.amountPaid && item.firmName
+      },
+      { 
+        name: 'Assignments', 
+        prefix: 'assignment:', 
+        icon: 'FileText',
+        color: 'bg-purple-600',
+        critical: true,
+        validator: (item: any) => item.submissionId && item.employeeId
+      },
+      { 
+        name: 'Employee Assignments', 
+        prefix: 'employee_assignments:', 
+        icon: 'Users',
+        color: 'bg-indigo-600',
+        critical: false,
+        validator: (item: any) => Array.isArray(item)
+      },
+      { 
+        name: 'Audit Logs', 
+        prefix: 'audit:', 
+        icon: 'Shield',
+        color: 'bg-gray-600',
+        critical: false,
+        validator: (item: any) => item.timestamp && item.action
+      },
+      { 
+        name: 'Test Data', 
+        prefix: 'test:', 
+        icon: 'Database',
+        color: 'bg-red-600',
+        critical: false,
+        validator: () => true
+      }
+    ];
+
+    const warnings: string[] = [];
+    const errors: string[] = [];
+    const categoryResults = [];
+
+    // Analyze each category
+    for (const category of categories) {
+      const items = allData.filter(item => {
+        if (typeof item === 'object' && item !== null && '_key' in item) {
+          return item._key.startsWith(category.prefix);
+        }
+        return false;
+      });
+
+      const sampleKeys = items.slice(0, 3).map(item => item._key);
+      
+      // Validate data integrity
+      let validCount = 0;
+      let invalidCount = 0;
+      
+      for (const item of items) {
+        try {
+          if (category.validator(item)) {
+            validCount++;
+          } else {
+            invalidCount++;
+            if (category.critical) {
+              errors.push(`Invalid ${category.name} data: ${item._key}`);
+            } else {
+              warnings.push(`Invalid ${category.name} data: ${item._key}`);
+            }
+          }
+        } catch (error) {
+          invalidCount++;
+          errors.push(`Validation error in ${category.name}: ${item._key}`);
+        }
+      }
+
+      categoryResults.push({
+        name: category.name,
+        prefix: category.prefix,
+        icon: category.icon,
+        color: category.color,
+        count: items.length,
+        validCount,
+        invalidCount,
+        sampleKeys,
+        critical: category.critical
+      });
+
+      // Critical category warnings
+      if (category.critical && items.length === 0) {
+        warnings.push(`⚠️ No data found for critical category: ${category.name}`);
+      }
+    }
+
+    // Check for orphaned data
+    const knownPrefixes = categories.map(c => c.prefix);
+    const orphanedData = allData.filter(item => {
+      if (typeof item === 'object' && item !== null && '_key' in item) {
+        return !knownPrefixes.some(prefix => item._key.startsWith(prefix));
+      }
+      return false;
+    });
+
+    if (orphanedData.length > 0) {
+      warnings.push(`Found ${orphanedData.length} orphaned data records (unknown prefixes)`);
+    }
+
+    // Determine overall data integrity
+    let dataIntegrity: 'excellent' | 'good' | 'warning' | 'critical';
+    if (errors.length > 0) {
+      dataIntegrity = 'critical';
+    } else if (warnings.length > 5) {
+      dataIntegrity = 'warning';
+    } else if (warnings.length > 0) {
+      dataIntegrity = 'good';
+    } else {
+      dataIntegrity = 'excellent';
+    }
+
+    const audit = {
+      totalKeys: allData.length,
+      categories: categoryResults,
+      warnings,
+      errors,
+      lastChecked: new Date().toISOString(),
+      dataIntegrity
+    };
+
+    console.log('✅ Database audit complete:', {
+      totalKeys: audit.totalKeys,
+      integrity: audit.dataIntegrity,
+      errors: errors.length,
+      warnings: warnings.length
+    });
+
+    return c.json({ success: true, audit });
+
+  } catch (error) {
+    console.error('Error running database audit:', error);
+    return c.json({ error: 'Internal server error while running audit' }, 500);
+  }
+});
+
+/**
+ * Get detailed data for a specific category
+ * Admin only
+ */
+app.get("/make-server-2c01e603/admin/database-category", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Check if user is admin
+    const adminAccount = await kv.get(`account:${user.id}`);
+    if (!adminAccount || adminAccount.role !== 'admin') {
+      return c.json({ error: 'Forbidden: Admin access required' }, 403);
+    }
+
+    const prefix = c.req.query('prefix');
+    if (!prefix) {
+      return c.json({ error: 'Prefix parameter required' }, 400);
+    }
+
+    const items = await kv.getByPrefix(prefix);
+    
+    const formattedItems = items.map(item => ({
+      key: item._key || 'unknown',
+      value: item
+    }));
+
+    return c.json({ success: true, items: formattedItems });
+
+  } catch (error) {
+    console.error('Error fetching category data:', error);
+    return c.json({ error: 'Internal server error while fetching category' }, 500);
+  }
+});
+
+/**
+ * Export all database data
+ * Admin only - CRITICAL for backups
+ */
+app.get("/make-server-2c01e603/admin/database-export", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Check if user is admin
+    const adminAccount = await kv.get(`account:${user.id}`);
+    if (!adminAccount || adminAccount.role !== 'admin') {
+      return c.json({ error: 'Forbidden: Admin access required' }, 403);
+    }
+
+    console.log('📦 Exporting entire database...');
+
+    // Get ALL data
+    const allData = await kv.getByPrefix('');
+    
+    const exportData = {
+      exportDate: new Date().toISOString(),
+      totalRecords: allData.length,
+      exportedBy: {
+        userId: user.id,
+        email: adminAccount.email,
+        name: `${adminAccount.firstName} ${adminAccount.lastName}`
+      },
+      data: allData
+    };
+
+    console.log(`✅ Database export complete: ${allData.length} records`);
+
+    return c.json({ success: true, export: exportData });
+
+  } catch (error) {
+    console.error('Error exporting database:', error);
+    return c.json({ error: 'Internal server error while exporting database' }, 500);
+  }
+});
+
+/**
+ * Test database persistence (write/read/verify)
+ * Admin only
+ */
+app.post("/make-server-2c01e603/admin/database-test", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Check if user is admin
+    const adminAccount = await kv.get(`account:${user.id}`);
+    if (!adminAccount || adminAccount.role !== 'admin') {
+      return c.json({ error: 'Forbidden: Admin access required' }, 403);
+    }
+
+    const { key, data } = await c.req.json();
+
+    if (!key || !data) {
+      return c.json({ error: 'Key and data required' }, 400);
+    }
+
+    // Write test data
+    await kv.set(key, data);
+    console.log(`✅ Test data written: ${key}`);
+
+    return c.json({ success: true, message: 'Test data written successfully' });
+
+  } catch (error) {
+    console.error('Error in persistence test (write):', error);
+    return c.json({ error: 'Internal server error while writing test data' }, 500);
+  }
+});
+
+/**
+ * Read test data
+ * Admin only
+ */
+app.get("/make-server-2c01e603/admin/database-test", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Check if user is admin
+    const adminAccount = await kv.get(`account:${user.id}`);
+    if (!adminAccount || adminAccount.role !== 'admin') {
+      return c.json({ error: 'Forbidden: Admin access required' }, 403);
+    }
+
+    const key = c.req.query('key');
+    if (!key) {
+      return c.json({ error: 'Key parameter required' }, 400);
+    }
+
+    // Read test data
+    const data = await kv.get(key);
+    
+    if (data === null) {
+      return c.json({ error: 'Test data not found' }, 404);
+    }
+
+    console.log(`✅ Test data read: ${key}`);
+
+    return c.json({ success: true, data });
+
+  } catch (error) {
+    console.error('Error in persistence test (read):', error);
+    return c.json({ error: 'Internal server error while reading test data' }, 500);
+  }
+});
+
+/**
+ * Delete test data
+ * Admin only
+ */
+app.delete("/make-server-2c01e603/admin/database-test", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    // Check if user is admin
+    const adminAccount = await kv.get(`account:${user.id}`);
+    if (!adminAccount || adminAccount.role !== 'admin') {
+      return c.json({ error: 'Forbidden: Admin access required' }, 403);
+    }
+
+    const key = c.req.query('key');
+    if (!key) {
+      return c.json({ error: 'Key parameter required' }, 400);
+    }
+
+    // Delete test data
+    await kv.del(key);
+    console.log(`✅ Test data deleted: ${key}`);
+
+    return c.json({ success: true, message: 'Test data deleted successfully' });
+
+  } catch (error) {
+    console.error('Error in persistence test (delete):', error);
+    return c.json({ error: 'Internal server error while deleting test data' }, 500);
+  }
+});

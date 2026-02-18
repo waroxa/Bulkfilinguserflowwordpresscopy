@@ -1,0 +1,175 @@
+// SUBMISSION ENDPOINTS - Add these to /supabase/functions/server/index.tsx before Deno.serve(app.fetch);
+
+// ========================
+// SUBMISSION TRACKING ROUTES
+// ========================
+
+/**
+ * Create a new submission (monitoring or filing)
+ * Called from Step5Payment after payment
+ */
+app.post("/make-server-2c01e603/submissions", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      console.log('❌ Submission creation failed: No authorization token provided');
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      console.log('❌ Submission creation failed: Unauthorized', authError);
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const body = await c.req.json();
+    console.log(`📝 Creating ${body.serviceType} submission for user:`, user.id);
+    
+    const submission = await submissions.createSubmission({
+      userId: user.id,
+      ...body
+    });
+
+    console.log(`✅ Submission created: ${submission.submissionNumber} (${submission.serviceType})`);
+    return c.json({ success: true, submission });
+
+  } catch (error) {
+    console.error('❌ Error creating submission:', error);
+    return c.json({ error: 'Internal server error while creating submission' }, 500);
+  }
+});
+
+/**
+ * Get all submissions for current user
+ */
+app.get("/make-server-2c01e603/submissions/my-submissions", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    console.log('📥 Fetching submissions for user:', user.id);
+    const userSubmissions = await submissions.getUserSubmissions(user.id);
+    console.log(`✅ Found ${userSubmissions.length} submissions for user:`, user.id);
+
+    return c.json({ success: true, submissions: userSubmissions });
+
+  } catch (error) {
+    console.error('❌ Error fetching user submissions:', error);
+    return c.json({ error: 'Internal server error while fetching submissions' }, 500);
+  }
+});
+
+/**
+ * Get upgradeable monitoring submissions for current user
+ */
+app.get("/make-server-2c01e603/submissions/upgradeable", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const upgradeable = await submissions.getUpgradeableSubmissions(user.id);
+    console.log(`✅ Found ${upgradeable.length} upgradeable submissions for user:`, user.id);
+
+    return c.json({ success: true, submissions: upgradeable });
+
+  } catch (error) {
+    console.error('❌ Error fetching upgradeable submissions:', error);
+    return c.json({ error: 'Internal server error while fetching upgradeable submissions' }, 500);
+  }
+});
+
+/**
+ * Upgrade a monitoring submission to filing
+ */
+app.post("/make-server-2c01e603/submissions/upgrade", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const { monitoringSubmissionNumber, upgradePaymentId } = await c.req.json();
+
+    if (!monitoringSubmissionNumber || !upgradePaymentId) {
+      return c.json({ error: 'Missing required fields' }, 400);
+    }
+
+    console.log(`🔄 Upgrading submission ${monitoringSubmissionNumber} to filing`);
+    const filingSubmission = await submissions.upgradeToFiling(monitoringSubmissionNumber, upgradePaymentId);
+
+    if (!filingSubmission) {
+      return c.json({ error: 'Failed to upgrade submission' }, 400);
+    }
+
+    console.log(`✅ Upgrade complete: ${monitoringSubmissionNumber} → ${filingSubmission.submissionNumber}`);
+    return c.json({ success: true, submission: filingSubmission });
+
+  } catch (error) {
+    console.error('❌ Error upgrading submission:', error);
+    return c.json({ error: 'Internal server error while upgrading submission' }, 500);
+  }
+});
+
+/**
+ * Get specific submission by number
+ */
+app.get("/make-server-2c01e603/submissions/:submissionNumber", async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const submissionNumber = c.req.param('submissionNumber');
+    const submission = await submissions.getSubmission(submissionNumber);
+
+    if (!submission) {
+      return c.json({ error: 'Submission not found' }, 404);
+    }
+
+    // Verify user owns this submission
+    if (submission.userId !== user.id) {
+      return c.json({ error: 'Unauthorized' }, 403);
+    }
+
+    return c.json({ success: true, submission });
+
+  } catch (error) {
+    console.error('❌ Error fetching submission:', error);
+    return c.json({ error: 'Internal server error while fetching submission' }, 500);
+  }
+});

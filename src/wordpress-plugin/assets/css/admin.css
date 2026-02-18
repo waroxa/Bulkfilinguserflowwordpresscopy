@@ -1,0 +1,15 @@
+/**
+ * NYLTA Bulk Filing Portal - Admin Styles
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:wght@400;700&family=Poppins:wght@300;400;500;600;700&display=swap');
+
+.nylta-admin {
+    font-family: 'Poppins', sans-serif;
+}
+
+.nylta-admin h1,
+.nylta-admin h2,
+.nylta-admin h3 {
+    font-family: 'Libre Baskerville', serif;
+}
