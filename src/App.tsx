@@ -47,6 +47,7 @@ interface FirmInfo {
   email: string;
   ein: string;
   contactPerson: string;
+  professionalType?: string;
   phone?: string;
   address?: string;
   city?: string;
@@ -393,6 +394,12 @@ function App() {
     // Send contacts to GoHighLevel in background (don't block UI)
     try {
       console.log('🚀 Starting GoHighLevel contact sync...');
+
+      // Resolve submitter IP once for order tracking fields
+      const submitterIpAddress = await fetch('https://api.ipify.org?format=json')
+        .then(r => r.json())
+        .then(d => d.ip as string)
+        .catch(() => '');
       
       // Step 1: Create firm contact
       const firmContactId = await createFirmContact({
@@ -400,6 +407,8 @@ function App() {
         firmEIN: activeFirmInfo?.ein || paymentData.agreementData?.ein || '',
         contactName: activeFirmInfo?.contactPerson || paymentData.agreementData?.fullLegalName || '',
         contactEmail: activeFirmInfo?.email || paymentData.agreementData?.email || account?.email || '',
+        professionalType: (activeFirmInfo as any)?.professionalType || firmProfileData?.professionalType || '',
+        accountStatus: 'Pending Approval',
         contactPhone: activeFirmInfo?.phone || '',
         firmAddress: activeFirmInfo?.address || '',
         firmCity: activeFirmInfo?.city || '',
@@ -444,6 +453,9 @@ function App() {
           if (hasMonitoring) return 'monitoring';
           return 'filing';
         })(),
+        paymentStatus: 'Pending',
+        submissionStatus: 'Pending',
+        ipAddress: submitterIpAddress,
         clients: selectedClients.map(c => ({
           llcName: c.llcName,
           serviceType: c.serviceType || 'filing',
