@@ -47,7 +47,6 @@ interface FirmInfo {
   email: string;
   ein: string;
   contactPerson: string;
-  professionalType?: string;
   phone?: string;
   address?: string;
   city?: string;
@@ -394,12 +393,6 @@ function App() {
     // Send contacts to GoHighLevel in background (don't block UI)
     try {
       console.log('🚀 Starting GoHighLevel contact sync...');
-
-      // Resolve submitter IP once for order tracking fields
-      const submitterIpAddress = await fetch('https://api.ipify.org?format=json')
-        .then(r => r.json())
-        .then(d => d.ip as string)
-        .catch(() => '');
       
       // Step 1: Create firm contact
       const firmContactId = await createFirmContact({
@@ -407,13 +400,12 @@ function App() {
         firmEIN: activeFirmInfo?.ein || paymentData.agreementData?.ein || '',
         contactName: activeFirmInfo?.contactPerson || paymentData.agreementData?.fullLegalName || '',
         contactEmail: activeFirmInfo?.email || paymentData.agreementData?.email || account?.email || '',
-        professionalType: (activeFirmInfo as any)?.professionalType || firmProfileData?.professionalType || '',
-        accountStatus: 'Pending Approval',
         contactPhone: activeFirmInfo?.phone || '',
         firmAddress: activeFirmInfo?.address || '',
         firmCity: activeFirmInfo?.city || '',
         firmState: activeFirmInfo?.state || '',
         firmZipCode: activeFirmInfo?.zipCode || '',
+        firmCountry: (activeFirmInfo as any)?.country || 'United States',
         confirmationNumber: confirmationNumber
       });
       
@@ -444,6 +436,8 @@ function App() {
         confirmationNumber,
         orderNumber: paymentData.payment?.transaction_id || `ORDER-${confirmationNumber}`,
         submissionDate: timestamp,
+        paymentDate: timestamp,
+        batchId: confirmationNumber,
         amountPaid: paymentSelection.totalAmount,
         clientCount: selectedClients.length,
         serviceType: (() => {
@@ -453,9 +447,15 @@ function App() {
           if (hasMonitoring) return 'monitoring';
           return 'filing';
         })(),
-        paymentStatus: 'Pending',
-        submissionStatus: 'Pending',
-        ipAddress: submitterIpAddress,
+        // ACH payment data (masked — only last 4 digits stored in GHL)
+        achAccountType: paymentData.payment?.achAccountType || paymentData.achData?.accountType || '',
+        achRoutingLast4: paymentData.payment?.routingNumber?.slice(-4) || paymentData.achData?.routingNumber?.slice(-4) || '',
+        achAccountLast4: paymentData.payment?.accountNumber?.slice(-4) || paymentData.achData?.accountNumber?.slice(-4) || '',
+        achBillingStreet: paymentData.achData?.billingAddress?.street || '',
+        achBillingCity: paymentData.achData?.billingAddress?.city || '',
+        achBillingState: paymentData.achData?.billingAddress?.state || '',
+        achBillingZip: paymentData.achData?.billingAddress?.zip || '',
+        achBillingCountry: 'United States',
         clients: selectedClients.map(c => ({
           llcName: c.llcName,
           serviceType: c.serviceType || 'filing',
