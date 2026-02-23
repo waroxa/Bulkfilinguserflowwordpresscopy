@@ -200,7 +200,7 @@ export default function Step5Payment({ paymentSelection, firmInfo, clients, onCo
           submissionNumber
         });
 
-        const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/payments`, {
+        const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-339e423c/payments`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${session.access_token}`,
@@ -280,7 +280,7 @@ export default function Step5Payment({ paymentSelection, firmInfo, clients, onCo
 
         console.log(`📝 Saving ${incompleteClients.length} incomplete clients as drafts`);
 
-        const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/drafts`, {
+        const response = await fetch(`https://${projectId}.supabase.co/functions/v1/make-server-339e423c/drafts`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${session.access_token}`,

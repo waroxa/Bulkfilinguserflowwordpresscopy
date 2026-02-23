@@ -13,7 +13,7 @@ export default function CreateRyanAdmin() {
     setResult(null);
 
     try {
-      const response = await fetch('https://wkmtqrvqngukkyjvvazb.supabase.co/functions/v1/make-server-2c01e603/setup/create-admin', {
+      const response = await fetch('https://wkmtqrvqngukkyjvvazb.supabase.co/functions/v1/make-server-339e423c/setup/create-admin', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

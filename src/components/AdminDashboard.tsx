@@ -42,6 +42,7 @@ import RoleSelector, { UserRole } from "./RoleSelector";
 import ProcessorDashboard from "./ProcessorDashboard";
 import ChargebacksDashboard from "./ChargebacksDashboard";
 import AdminTools from "./AdminTools";
+import AdminAccountManagement from "./AdminAccountManagement";
 import { AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 interface AdminDashboardProps {
@@ -107,7 +108,7 @@ export default function AdminDashboard({ onBack, onNavigateToDocs }: AdminDashbo
   const { session } = useAuth();
   // All useState hooks must be called before any conditional returns
   const [currentRole, setCurrentRole] = useState<UserRole | null>(null);
-  const [selectedView, setSelectedView] = useState<"overview" | "submissions" | "stats" | "pricing" | "tools">("overview");
+  const [selectedView, setSelectedView] = useState<"overview" | "submissions" | "stats" | "pricing" | "accounts" | "tools">("overview");
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "Paid" | "Processing" | "Abandoned" | "Abandoned30+">("all");
   const [serviceFilter, setServiceFilter] = useState<"all" | "monitoring" | "filing">("all");
@@ -966,11 +967,15 @@ End of Report
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Navigation Tabs */}
         <Tabs value={selectedView} onValueChange={(v) => setSelectedView(v as any)} className="mb-6">
-          <TabsList className="grid w-full max-w-6xl grid-cols-5">
+          <TabsList className="grid w-full max-w-6xl grid-cols-6">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="submissions">Submissions</TabsTrigger>
             <TabsTrigger value="stats">Statistics</TabsTrigger>
             <TabsTrigger value="pricing">Pricing</TabsTrigger>
+            <TabsTrigger value="accounts">
+              <Users className="mr-2 h-4 w-4" />
+              Accounts
+            </TabsTrigger>
             <TabsTrigger value="tools">
               <Wrench className="mr-2 h-4 w-4" />
               Tools
@@ -1934,6 +1939,11 @@ End of Report
           {/* Pricing Tab */}
           <TabsContent value="pricing" className="space-y-6 mt-6">
             <AdminPricingSettings />
+          </TabsContent>
+
+          {/* Accounts Tab */}
+          <TabsContent value="accounts" className="space-y-6 mt-6">
+            <AdminAccountManagement />
           </TabsContent>
 
           {/* Tools Tab */}

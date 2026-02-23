@@ -5,7 +5,7 @@ import type { Session, User } from '@supabase/supabase-js';
 import { projectId, publicAnonKey } from '../utils/supabase/info';
 
 // Define server URL - use Supabase Edge Function endpoint
-const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603`;
+const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-339e423c`;
 
 interface AccountData {
   userId: string;
@@ -25,6 +25,9 @@ interface AccountData {
   workers?: any[];
   createdAt: string;
   updatedAt: string;
+  // GoHighLevel firm contact ID (created on approval)
+  ghlFirmContactId?: string;
+  highLevelContactId?: string;
   // Computed property
   contactName?: string;
 }

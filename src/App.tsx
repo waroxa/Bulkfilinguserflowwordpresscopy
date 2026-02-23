@@ -204,7 +204,7 @@ function App() {
       try {
         setIsLoadingProfile(true);
         const response = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/firm-profile`,
+          `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/firm-profile`,
           {
             headers: {
               'Authorization': `Bearer ${session.access_token}`,
@@ -248,7 +248,7 @@ function App() {
       try {
         setIsLoadingSurvey(true);
         const response = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/survey`,
+          `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/survey`,
           {
             headers: {
               'Authorization': `Bearer ${session.access_token}`,
@@ -394,40 +394,48 @@ function App() {
     try {
       console.log('🚀 Starting GoHighLevel contact sync...');
       
-      // Step 1: Create firm contact
-      const firmContactId = await createFirmContact({
-        firmName: activeFirmInfo?.firmName || paymentData.agreementData?.firmName || 'Unknown Firm',
-        firmEIN: activeFirmInfo?.ein || paymentData.agreementData?.ein || '',
-        contactName: activeFirmInfo?.contactPerson || paymentData.agreementData?.fullLegalName || '',
-        contactEmail: activeFirmInfo?.email || paymentData.agreementData?.email || account?.email || '',
-        contactPhone: activeFirmInfo?.phone || '',
-        firmAddress: activeFirmInfo?.address || '',
-        firmCity: activeFirmInfo?.city || '',
-        firmState: activeFirmInfo?.state || '',
-        firmZipCode: activeFirmInfo?.zipCode || '',
-        firmCountry: (activeFirmInfo as any)?.country || 'United States',
-        confirmationNumber: confirmationNumber
-      });
+      // Step 1: Retrieve the firm's GHL contact ID (created when admin approved the account)
+      // Fall back to creating a new firm contact if the ID isn't stored
+      let firmContactId = (account as any)?.ghlFirmContactId || (account as any)?.highLevelContactId || '';
       
-      console.log('✅ Firm contact created:', firmContactId);
+      if (!firmContactId || firmContactId === '' || firmContactId === 'SKIP_NO_API_KEY') {
+        console.log('⚠️ No stored GHL firm contact ID — creating one now as fallback...');
+        firmContactId = await createFirmContact({
+          firmName: activeFirmInfo?.firmName || paymentData.agreementData?.firmName || 'Unknown Firm',
+          firmEIN: activeFirmInfo?.ein || paymentData.agreementData?.ein || '',
+          contactName: activeFirmInfo?.contactPerson || paymentData.agreementData?.fullLegalName || '',
+          contactEmail: activeFirmInfo?.email || paymentData.agreementData?.email || account?.email || '',
+          contactPhone: activeFirmInfo?.phone || '',
+          firmAddress: activeFirmInfo?.address || '',
+          firmCity: activeFirmInfo?.city || '',
+          firmState: activeFirmInfo?.state || '',
+          firmZipCode: activeFirmInfo?.zipCode || '',
+          firmCountry: (activeFirmInfo as any)?.country || 'United States',
+          confirmationNumber: confirmationNumber
+        });
+        console.log('✅ Fallback firm contact created:', firmContactId);
+      } else {
+        console.log('✅ Using stored GHL firm contact ID:', firmContactId);
+      }
       
-      // Step 2: Create client contacts (all at once)
+      // Step 2: Create child client contacts — each linked to the parent firm
+      const batchId = confirmationNumber;
       const clientContactsData: ClientContactData[] = selectedClients.map(client => ({
         ...convertWizardClientToContactData(client),
         parentFirmId: firmContactId,
         parentFirmName: activeFirmInfo?.firmName || 'Unknown Firm',
         parentFirmConfirmation: confirmationNumber,
-        contactEmail: activeFirmInfo?.email || '', // Use firm email as fallback
+        contactEmail: client.contactEmail || activeFirmInfo?.email || '', // Prefer client-level email
       }));
       
       const clientContactIds = await createBulkClientContacts(
         firmContactId,
         activeFirmInfo?.firmName || 'Unknown Firm',
-        confirmationNumber,
+        batchId,
         clientContactsData
       );
       
-      console.log(`✅ Created ${clientContactIds.length} client contacts`);
+      console.log(`✅ Created ${clientContactIds.length} client contacts (parent: ${firmContactId}, batch: ${batchId})`);
       
       // Step 3: Send order confirmation
       await sendOrderConfirmation({
@@ -448,13 +456,14 @@ function App() {
           return 'filing';
         })(),
         // ACH payment data (masked — only last 4 digits stored in GHL)
-        achAccountType: paymentData.payment?.achAccountType || paymentData.achData?.accountType || '',
-        achRoutingLast4: paymentData.payment?.routingNumber?.slice(-4) || paymentData.achData?.routingNumber?.slice(-4) || '',
-        achAccountLast4: paymentData.payment?.accountNumber?.slice(-4) || paymentData.achData?.accountNumber?.slice(-4) || '',
-        achBillingStreet: paymentData.achData?.billingAddress?.street || '',
-        achBillingCity: paymentData.achData?.billingAddress?.city || '',
-        achBillingState: paymentData.achData?.billingAddress?.state || '',
-        achBillingZip: paymentData.achData?.billingAddress?.zip || '',
+        // paymentData structure: { paymentMethod, paymentData: ACHFormData, billingAddress, agreementData, ... }
+        achAccountType: paymentData.paymentData?.accountType || '',
+        achRoutingLast4: paymentData.paymentData?.routingNumber?.slice(-4) || '',
+        achAccountLast4: paymentData.paymentData?.accountNumber?.slice(-4) || '',
+        achBillingStreet: paymentData.paymentData?.billingAddress?.street || paymentData.billingAddress?.street || '',
+        achBillingCity: paymentData.paymentData?.billingAddress?.city || paymentData.billingAddress?.city || '',
+        achBillingState: paymentData.paymentData?.billingAddress?.state || paymentData.billingAddress?.state || '',
+        achBillingZip: paymentData.paymentData?.billingAddress?.zip || paymentData.billingAddress?.zip || '',
         achBillingCountry: 'United States',
         clients: selectedClients.map(c => ({
           llcName: c.llcName,

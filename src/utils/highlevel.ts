@@ -5,9 +5,9 @@ import { projectId } from './supabase/info';
 
 // HighLevel API Configuration
 const HIGHLEVEL_API_BASE = 'https://services.leadconnectorhq.com';
-const HIGHLEVEL_API_KEY = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_API_KEY || 'pit-cca7bd65-1fe1-4754-88d7-a51883d631f2') : 'pit-cca7bd65-1fe1-4754-88d7-a51883d631f2';
-const HIGHLEVEL_LOCATION_ID = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_LOCATION_ID || 'fXXJzwVf8OtANDf2M4VP') : 'fXXJzwVf8OtANDf2M4VP';
-const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603`;
+const HIGHLEVEL_API_KEY = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_API_KEY || '') : '';
+const HIGHLEVEL_LOCATION_ID = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_LOCATION_ID || 'QWhUZ1cxgQgSMFYGloyK') : 'QWhUZ1cxgQgSMFYGloyK';
+const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-339e423c`;
 
 // Audit Log Helper - Send logs to backend for storage
 async function sendAuditLog(logData: {

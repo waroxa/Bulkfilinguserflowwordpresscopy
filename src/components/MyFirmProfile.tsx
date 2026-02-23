@@ -138,7 +138,7 @@ export default function MyFirmProfile({ onBack }: MyFirmProfileProps) {
     try {
       setIsLoading(true);
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/firm-profile`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/firm-profile`,
         {
           headers: {
             'Authorization': `Bearer ${publicAnonKey}`,
@@ -233,7 +233,7 @@ export default function MyFirmProfile({ onBack }: MyFirmProfileProps) {
     try {
       setIsSaving(true);
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/firm-profile`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/firm-profile`,
         {
           method: 'POST',
           headers: {

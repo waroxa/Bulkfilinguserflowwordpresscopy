@@ -224,8 +224,8 @@ export default function AdminTools({ onBack }: AdminToolsProps) {
     },
     {
       id: 'go-highlevel-field-creator',
-      name: 'Go HighLevel Field Creator',
-      description: 'Create and manage custom fields in HighLevel CRM',
+      name: 'GHL Field Setup (Maria Keys)',
+      description: 'Create all 238 custom fields in GHL using simplified keys (ca1_, bo1_, etc.) with folder support',
       icon: Plus,
       color: 'bg-orange-600',
       category: 'Integration'

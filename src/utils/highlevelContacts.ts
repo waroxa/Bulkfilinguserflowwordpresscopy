@@ -70,6 +70,9 @@ export interface ClientContactData {
   parentFirmName?: string;
   parentFirmConfirmation?: string;
   
+  // Batch tracking
+  batchId?: string;
+  
   // Company Applicants (up to 3)
   companyApplicants?: Array<{
     fullName?: string;
@@ -360,7 +363,8 @@ export async function createClientContact(clientData: ClientContactData): Promis
       `firm-${clientData.parentFirmConfirmation}`,
       clientData.serviceType,       // 'monitoring' or 'filing'
       clientData.entityType,        // 'domestic' or 'foreign'
-      clientData.filingType         // 'disclosure' or 'exemption'
+      clientData.filingType,        // 'disclosure' or 'exemption'
+      ...(clientData.batchId ? [`batch-${clientData.batchId}`] : [])
     ];
     
     // ── Build comprehensive custom fields (Maria's simplified keys) ──
@@ -370,6 +374,7 @@ export async function createClientContact(clientData: ClientContactData): Promis
       { key: 'parent_firm_id', field_value: clientData.parentFirmId || '' },
       { key: 'parent_firm_name', field_value: clientData.parentFirmName || '' },
       { key: 'parent_firm_confirmation', field_value: clientData.parentFirmConfirmation || '' },
+      { key: 'batch_id', field_value: clientData.batchId || clientData.parentFirmConfirmation || '' },
       
       // LLC / Client Information
       { key: 'llc_legal_name', field_value: clientData.llcName },
@@ -677,7 +682,8 @@ export async function createBulkClientContacts(
         ...client,
         parentFirmId: firmContactId,
         parentFirmName: firmName,
-        parentFirmConfirmation: firmConfirmation
+        parentFirmConfirmation: firmConfirmation,
+        batchId: client.batchId || firmConfirmation  // Batch ID defaults to the confirmation number
       };
       
       const contactId = await createClientContact(clientWithFirmInfo);

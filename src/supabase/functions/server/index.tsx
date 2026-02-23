@@ -19,6 +19,24 @@ app.use('*', cors({
 // Enable request logging
 app.use('*', logger(console.log));
 
+// ── Path rewrite middleware ──────────────────────────────────────────────
+// The deployed Supabase Edge Function name is "make-server-339e423c",
+// but every route below was originally defined with "make-server-2c01e603".
+// This middleware transparently rewrites incoming paths so all existing
+// route definitions keep working without any changes.
+const NEW_PREFIX = '/make-server-339e423c';
+const OLD_PREFIX = '/make-server-2c01e603';
+
+app.use('*', async (c, next) => {
+  const url = new URL(c.req.url);
+  if (url.pathname.startsWith(NEW_PREFIX)) {
+    url.pathname = OLD_PREFIX + url.pathname.slice(NEW_PREFIX.length);
+    const rewritten = new Request(url.toString(), c.req.raw);
+    return app.fetch(rewritten);
+  }
+  return next();
+});
+
 // Initialize Supabase client for auth
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -741,149 +759,151 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/approve", async (c) => {
 
     console.log(`Account approved for user ${targetUserId} with username: ${username}`);
 
-    // Update HighLevel contact with approval tag to trigger workflow
-    if (targetAccount.highLevelContactId) {
-      console.log('🔄 Updating HighLevel contact with approval tag...');
-      console.log('🔄 HighLevel Contact ID:', targetAccount.highLevelContactId);
-      console.log('🔄 Location ID: fXXJzwVf8OtANDf2M4VP');
-      
-      try {
-        // Add bulk_status_active tag to trigger workflow (Version 2021-07-28)
-        const addHighLevelTag = async (contactId: string) => {
-          const HIGHLEVEL_API_BASE = 'https://services.leadconnectorhq.com';
-          const HIGHLEVEL_API_KEY = Deno.env.get('VITE_HIGHLEVEL_API_KEY') || 'pit-cca7bd65-1fe1-4754-88d7-a51883d631f2';
-          const HIGHLEVEL_LOCATION_ID = Deno.env.get('VITE_HIGHLEVEL_LOCATION_ID') || 'fXXJzwVf8OtANDf2M4VP';
-          
-          const startTime = Date.now();
-          let responseStatus = 0;
-          let responseBody = '';
-          let success = false;
-          let errorMessage = '';
-          
+    // ──────────────────────────────────────────────────────────────────────
+    // CREATE the firm's GHL contact on approval (parent contact).
+    // This contact ID becomes the "parent" for all client contacts
+    // created during future submissions.
+    // ──────────────────────────────────────────────────────────────────────
+    try {
+      const HIGHLEVEL_API_BASE = 'https://services.leadconnectorhq.com';
+      const HIGHLEVEL_API_KEY = Deno.env.get('VITE_HIGHLEVEL_API_KEY') || '';
+      const HIGHLEVEL_LOCATION_ID = Deno.env.get('VITE_HIGHLEVEL_LOCATION_ID') || 'QWhUZ1cxgQgSMFYGloyK';
+
+      if (!HIGHLEVEL_API_KEY) {
+        console.warn('⚠️ VITE_HIGHLEVEL_API_KEY not set – skipping GHL firm contact creation');
+      } else {
+        const startTime = Date.now();
+        const contactName = `${targetAccount.firstName || ''} ${targetAccount.lastName || ''}`.trim()
+          || targetAccount.contactName || targetAccount.email;
+
+        const firmContactPayload: any = {
+          locationId: HIGHLEVEL_LOCATION_ID,
+          firstName: targetAccount.firstName || contactName.split(' ')[0] || targetAccount.firmName,
+          lastName: targetAccount.lastName || contactName.split(' ').slice(1).join(' ') || '',
+          email: targetAccount.email,
+          phone: targetAccount.phone || '',
+          companyName: targetAccount.firmName,
+          address1: targetAccount.address || '',
+          city: targetAccount.city || '',
+          state: targetAccount.state || '',
+          postalCode: targetAccount.zipCode || '',
+          country: targetAccount.country || 'United States',
+          tags: [
+            'firm',
+            'nylta-bulk-filing',
+            'bulk_status_active',
+            `role-${targetAccount.role || 'unknown'}`
+          ],
+          customFields: [
+            { key: 'firm_name', field_value: targetAccount.firmName || '' },
+            { key: 'contact_name', field_value: contactName },
+            { key: 'contact_email', field_value: targetAccount.email },
+            { key: 'contact_phone', field_value: targetAccount.phone || '' },
+            { key: 'account_type', field_value: 'firm' },
+            { key: 'firm_ein', field_value: targetAccount.ein || '' },
+            { key: 'firm_street_address', field_value: targetAccount.address || '' },
+            { key: 'firm_city', field_value: targetAccount.city || '' },
+            { key: 'firm_state', field_value: targetAccount.state || '' },
+            { key: 'firm_zip_code', field_value: targetAccount.zipCode || '' },
+            { key: 'firm_country', field_value: targetAccount.country || 'United States' }
+          ]
+        };
+
+        console.log('📤 Creating GHL firm contact for:', targetAccount.firmName);
+        console.log('📤 Location ID:', HIGHLEVEL_LOCATION_ID);
+
+        const ghlResponse = await fetch(`${HIGHLEVEL_API_BASE}/contacts/`, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+            'Version': '2021-07-28'
+          },
+          body: JSON.stringify(firmContactPayload)
+        });
+
+        const ghlResponseText = await ghlResponse.text();
+        let ghlFirmContactId: string | null = null;
+
+        if (ghlResponse.ok) {
           try {
-            // First, fetch existing contact to get current tags
-            console.log('📤 Fetching existing contact tags...');
-            const getResponse = await fetch(`${HIGHLEVEL_API_BASE}/contacts/${contactId}?locationId=${HIGHLEVEL_LOCATION_ID}`, {
-              method: 'GET',
+            const ghlData = JSON.parse(ghlResponseText);
+            ghlFirmContactId = ghlData.contact?.id || ghlData.id || null;
+          } catch {
+            console.error('❌ Failed to parse GHL response JSON:', ghlResponseText);
+          }
+        } else {
+          console.error('❌ GHL firm contact creation failed:', ghlResponse.status, ghlResponseText);
+        }
+
+        if (ghlFirmContactId) {
+          console.log('✅ GHL firm contact created:', ghlFirmContactId);
+
+          // Store the firm contact ID on the account for future submissions
+          targetAccount.ghlFirmContactId = ghlFirmContactId;
+          targetAccount.highLevelContactId = ghlFirmContactId; // backward compat
+          await kv.set(`account:${targetUserId}`, targetAccount);
+
+          // Add an approval note to the GHL contact
+          try {
+            await fetch(`${HIGHLEVEL_API_BASE}/contacts/${ghlFirmContactId}/notes`, {
+              method: 'POST',
               headers: {
                 'Accept': 'application/json',
-                'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
-                'Version': '2021-07-28'
-              }
-            });
-
-            if (!getResponse.ok) {
-              const errorText = await getResponse.text();
-              console.error('❌ Failed to fetch contact for tag update:', getResponse.status, errorText);
-              errorMessage = errorText;
-              responseStatus = getResponse.status;
-              responseBody = errorText;
-              return false;
-            }
-
-            const contactData = await getResponse.json();
-            const existingTags = contactData.contact?.tags || [];
-            
-            console.log('📋 Existing tags:', existingTags);
-            
-            // Merge existing tags with new tag (avoid duplicates)
-            const mergedTags = [...new Set([...existingTags, 'bulk_status_active'])];
-            
-            console.log('📋 Merged tags (with bulk_status_active):', mergedTags);
-
-            const requestBody = { tags: mergedTags };
-            const url = `${HIGHLEVEL_API_BASE}/contacts/${contactId}?locationId=${HIGHLEVEL_LOCATION_ID}`;
-            
-            console.log('📤 HighLevel API Call Details:');
-            console.log('   URL:', url);
-            console.log('   Method: PUT');
-            console.log('   Contact ID:', contactId);
-            console.log('   Adding tag: bulk_status_active');
-            console.log('📤 Request Body:', JSON.stringify(requestBody, null, 2));
-            
-            const response = await fetch(url, {
-              method: 'PUT',
-              headers: {
-                'Accept': 'application/json',
-                'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
                 'Content-Type': 'application/json',
+                'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
                 'Version': '2021-07-28'
               },
-              body: JSON.stringify(requestBody)
+              body: JSON.stringify({
+                body: `Account approved by admin.\nUsername: ${username}\nFirm: ${targetAccount.firmName}\nContact: ${contactName}\nRole: ${targetAccount.role}\nApproval Date: ${new Date().toISOString()}`
+              })
             });
-            
-            responseStatus = response.status;
-            console.log('📥 HighLevel PUT response status:', response.status, response.statusText);
-            
-            if (!response.ok) {
-              const errorText = await response.text();
-              console.error('❌ HighLevel PUT error response:', errorText);
-              errorMessage = errorText;
-              responseBody = errorText;
-              success = false;
-            } else {
-              const responseText = await response.text();
-              console.log('📥 HighLevel PUT response:', responseText);
-              responseBody = responseText;
-              success = true;
-            }
-          } catch (fetchError: any) {
-            console.error('❌ HighLevel API fetch error:', fetchError);
-            errorMessage = fetchError?.message || String(fetchError);
-            success = false;
+            console.log('✅ Approval note added to GHL contact');
+          } catch (noteErr) {
+            console.warn('⚠️ Failed to add approval note (non-critical):', noteErr);
           }
-          
-          // Save audit log
-          await saveAuditLog({
-            timestamp: new Date().toISOString(),
-            action: 'ACCOUNT_APPROVAL_TAG_UPDATE',
-            contactId,
-            userId: targetUserId,
-            firmName: targetAccount.firmName,
-            email: targetAccount.email,
-            success,
-            requestBody: { tag: 'bulk_status_active' },
-            responseStatus,
-            responseBody,
-            errorMessage,
-            metadata: {
-              username,
-              approvedBy: user.id,
-              duration: Date.now() - startTime
-            }
-          });
-          
-          return success;
-        };
-        
-        const updateSuccess = await addHighLevelTag(targetAccount.highLevelContactId);
-        
-        if (updateSuccess) {
-          console.log('✅ HighLevel contact tagged with bulk_status_active (workflow trigger)');
         } else {
-          console.warn('⚠️ Failed to update HighLevel contact tag (non-critical)');
+          console.warn('⚠️ GHL firm contact creation returned no ID');
         }
-      } catch (hlError) {
-        console.warn('⚠️ HighLevel update error (non-critical):', hlError);
-        
-        // Log the error
+
+        // Audit log
         await saveAuditLog({
           timestamp: new Date().toISOString(),
-          action: 'ACCOUNT_APPROVAL_TAG_UPDATE',
-          contactId: targetAccount.highLevelContactId,
+          action: 'FIRM_CONTACT_CREATED_ON_APPROVAL',
+          contactId: ghlFirmContactId || undefined,
           userId: targetUserId,
           firmName: targetAccount.firmName,
           email: targetAccount.email,
-          success: false,
-          errorMessage: hlError?.message || String(hlError),
+          success: !!ghlFirmContactId,
+          requestBody: firmContactPayload,
+          responseStatus: ghlResponse.status,
+          responseBody: ghlResponseText,
+          errorMessage: ghlFirmContactId ? undefined : `HTTP ${ghlResponse.status}`,
           metadata: {
             username,
-            approvedBy: user.id
+            approvedBy: user.id,
+            duration: Date.now() - startTime,
+            locationId: HIGHLEVEL_LOCATION_ID
           }
         });
       }
-    } else {
-      console.log('⚠️ No HighLevel contact ID found for this account - skipping HighLevel update');
+    } catch (hlError) {
+      console.warn('⚠️ GHL firm contact creation error (non-critical):', hlError);
+
+      await saveAuditLog({
+        timestamp: new Date().toISOString(),
+        action: 'FIRM_CONTACT_CREATED_ON_APPROVAL',
+        userId: targetUserId,
+        firmName: targetAccount.firmName,
+        email: targetAccount.email,
+        success: false,
+        errorMessage: hlError instanceof Error ? hlError.message : String(hlError),
+        metadata: {
+          username,
+          approvedBy: user.id
+        }
+      });
     }
 
     // Send approval email
@@ -901,6 +921,232 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/approve", async (c) => {
     console.log(`Error approving account: ${error}`);
     console.error('Full error:', error);
     return c.json({ error: 'Internal server error while approving account', details: String(error) }, 500);
+  }
+});
+
+/**
+ * Test GHL API connectivity (Admin only)
+ * Uses the exact proven working curl endpoint:
+ *   GET /locations/{locationId}/customFields
+ *   -H "Accept: application/json"
+ *   -H "Authorization: Bearer {key}"
+ *   -H "Version: 2021-07-28"
+ */
+app.get("/make-server-2c01e603/admin/ghl/test-connection", async (c) => {
+  try {
+    console.log('=== TEST GHL CONNECTION ===');
+
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) {
+      return c.json({ ok: false, error: 'No authorization token' }, 401);
+    }
+
+    const authResult = await supabase.auth.getUser(accessToken);
+    if (authResult.error || !authResult.data?.user?.id) {
+      return c.json({ ok: false, error: 'Unauthorized' }, 401);
+    }
+
+    const adminAccount = await kv.get(`account:${authResult.data.user.id}`);
+    if (!adminAccount || adminAccount.role !== 'admin') {
+      return c.json({ ok: false, error: 'Admin access required' }, 403);
+    }
+
+    const GHL_KEY = Deno.env.get('VITE_HIGHLEVEL_API_KEY') || '';
+    const GHL_LOC = Deno.env.get('VITE_HIGHLEVEL_LOCATION_ID') || 'QWhUZ1cxgQgSMFYGloyK';
+
+    console.log('GHL_KEY present:', !!GHL_KEY, '| prefix:', GHL_KEY.substring(0, 12));
+    console.log('GHL_LOC:', GHL_LOC);
+
+    if (!GHL_KEY) {
+      return c.json({
+        ok: false,
+        error: 'VITE_HIGHLEVEL_API_KEY is not set in environment variables',
+        locationId: GHL_LOC
+      });
+    }
+
+    // ── Exact same endpoint + headers as the proven working curl ──
+    const ghlUrl = `https://services.leadconnectorhq.com/locations/${GHL_LOC}/customFields`;
+    console.log('Testing GHL URL:', ghlUrl);
+
+    const startMs = Date.now();
+    let ghlRes: Response;
+    try {
+      ghlRes = await fetch(ghlUrl, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'Authorization': `Bearer ${GHL_KEY}`,
+          'Version': '2021-07-28'
+        }
+      });
+    } catch (fetchErr) {
+      const errMsg = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+      console.error('GHL fetch network error:', errMsg);
+      return c.json({
+        ok: false,
+        error: `Network error reaching GHL API: ${errMsg}`,
+        locationId: GHL_LOC,
+        keyPrefix: GHL_KEY.substring(0, 12) + '...'
+      });
+    }
+
+    const elapsed = Date.now() - startMs;
+    console.log('GHL response status:', ghlRes.status, '| elapsed:', elapsed, 'ms');
+
+    let body = '';
+    try {
+      body = await ghlRes.text();
+    } catch (textErr) {
+      const errMsg = textErr instanceof Error ? textErr.message : String(textErr);
+      console.error('Failed to read GHL response body:', errMsg);
+      return c.json({
+        ok: false,
+        error: `Could not read GHL response body: ${errMsg}`,
+        statusCode: ghlRes.status,
+        locationId: GHL_LOC,
+        keyPrefix: GHL_KEY.substring(0, 12) + '...',
+        elapsedMs: elapsed
+      });
+    }
+
+    console.log('GHL body (first 300 chars):', body.substring(0, 300));
+
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      // body is not JSON — that's fine, we report raw text below
+    }
+
+    if (ghlRes.ok && parsed) {
+      const fieldCount = Array.isArray(parsed.customFields) ? parsed.customFields.length : 0;
+      console.log('✅ GHL connection test PASSED —', fieldCount, 'custom fields, elapsed', elapsed, 'ms');
+      return c.json({
+        ok: true,
+        statusCode: ghlRes.status,
+        locationId: GHL_LOC,
+        locationName: `${fieldCount} custom fields found`,
+        keyPrefix: GHL_KEY.substring(0, 12) + '...',
+        elapsedMs: elapsed,
+        customFieldCount: fieldCount
+      });
+    } else {
+      const errorDetail = parsed?.message || parsed?.error || body.substring(0, 300);
+      console.warn('❌ GHL connection test FAILED:', ghlRes.status, errorDetail);
+      return c.json({
+        ok: false,
+        statusCode: ghlRes.status,
+        error: `GHL API returned ${ghlRes.status}: ${errorDetail}`,
+        locationId: GHL_LOC,
+        keyPrefix: GHL_KEY.substring(0, 12) + '...',
+        elapsedMs: elapsed
+      });
+    }
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error('GHL connection test unexpected error:', errMsg);
+    return c.json({ ok: false, error: `Server error during GHL test: ${errMsg}` });
+  }
+});
+
+/**
+ * Create GHL firm contact — mirrors the exact working curl format
+ */
+app.post("/make-server-2c01e603/admin/accounts/:userId/create-ghl-contact", async (c) => {
+  try {
+    console.log('=== CREATE GHL FIRM CONTACT ===');
+
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token' }, 401);
+    }
+
+    const authResult = await supabase.auth.getUser(accessToken);
+    if (authResult.error || !authResult.data?.user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    const adminUserId = authResult.data.user.id;
+
+    const adminAccount = await kv.get(`account:${adminUserId}`);
+    if (!adminAccount || adminAccount.role !== 'admin') {
+      return c.json({ error: 'Admin access required' }, 403);
+    }
+
+    const targetUserId = c.req.param('userId');
+    const targetAccount = await kv.get(`account:${targetUserId}`);
+    if (!targetAccount) {
+      return c.json({ error: 'Account not found' }, 404);
+    }
+
+    const GHL_KEY = Deno.env.get('VITE_HIGHLEVEL_API_KEY') || '';
+    const GHL_LOC = Deno.env.get('VITE_HIGHLEVEL_LOCATION_ID') || 'QWhUZ1cxgQgSMFYGloyK';
+    if (!GHL_KEY) {
+      return c.json({ error: 'VITE_HIGHLEVEL_API_KEY not set' }, 500);
+    }
+
+    const firmProfile = await kv.get(`firm_profile:${targetUserId}`);
+
+    // Exact same shape as the working curl — no customFields, just basics
+    const payload = {
+      locationId: GHL_LOC,
+      firstName: targetAccount.firstName || targetAccount.firmName || 'Firm',
+      lastName: targetAccount.lastName || '',
+      email: targetAccount.email,
+      phone: targetAccount.phone || firmProfile?.phone || '',
+      companyName: targetAccount.firmName || '',
+      address1: firmProfile?.address || '',
+      city: firmProfile?.city || '',
+      state: firmProfile?.state || '',
+      postalCode: firmProfile?.zipCode || '',
+      country: 'United States',
+      tags: ['firm', 'nylta-bulk-filing']
+    };
+
+    console.log('GHL payload:', JSON.stringify(payload));
+
+    const ghlRes = await fetch('https://services.leadconnectorhq.com/contacts/', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${GHL_KEY}`,
+        'Version': '2021-07-28'
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const ghlText = await ghlRes.text();
+    console.log('GHL status:', ghlRes.status, '| body:', ghlText);
+
+    if (!ghlRes.ok) {
+      return c.json({ error: 'GHL API error', status: ghlRes.status, body: ghlText }, 502);
+    }
+
+    let contactId = '';
+    try {
+      const ghlData = JSON.parse(ghlText);
+      contactId = ghlData.contact?.id || ghlData.id || '';
+    } catch (e) {
+      return c.json({ error: 'Cannot parse GHL response', raw: ghlText }, 500);
+    }
+
+    if (!contactId) {
+      return c.json({ error: 'No contact ID in GHL response', raw: ghlText }, 500);
+    }
+
+    targetAccount.ghlFirmContactId = contactId;
+    targetAccount.highLevelContactId = contactId;
+    targetAccount.updatedAt = new Date().toISOString();
+    await kv.set(`account:${targetUserId}`, targetAccount);
+
+    console.log('GHL firm contact saved:', contactId);
+
+    return c.json({ success: true, ghlFirmContactId: contactId });
+
+  } catch (error) {
+    console.error('create-ghl-contact error:', error);
+    return c.json({ error: 'Server error', details: String(error) }, 500);
   }
 });
 
@@ -1361,9 +1607,9 @@ app.post("/make-server-2c01e603/bulk-filing/submit", async (c) => {
 
     const submissionData = await c.req.json();
 
-    // External API configuration
-    const EXTERNAL_API_PIT = 'pit-cca7bd65-1fe1-4754-88d7-a51883d631f2';
-    const LOCATION_ID = 'fXXJzwVf8OtANDf2M4VP';
+    // External API configuration — read from env, fallback to test location
+    const EXTERNAL_API_PIT = Deno.env.get('VITE_HIGHLEVEL_API_KEY') || '';
+    const LOCATION_ID = Deno.env.get('VITE_HIGHLEVEL_LOCATION_ID') || 'QWhUZ1cxgQgSMFYGloyK';
 
     // TODO: Prepare the data format expected by the external API
     const apiPayload = {
@@ -1555,8 +1801,8 @@ app.post('/make-server-2c01e603/firm-profile', async (c) => {
           try {
             const updateHighLevelContact = async (contactId: string, updates: any) => {
               const HIGHLEVEL_API_BASE = 'https://services.leadconnectorhq.com';
-              const HIGHLEVEL_API_KEY = Deno.env.get('VITE_HIGHLEVEL_API_KEY') || 'pit-cca7bd65-1fe1-4754-88d7-a51883d631f2';
-              const HIGHLEVEL_LOCATION_ID = Deno.env.get('VITE_HIGHLEVEL_LOCATION_ID') || 'fXXJzwVf8OtANDf2M4VP';
+              const HIGHLEVEL_API_KEY = Deno.env.get('VITE_HIGHLEVEL_API_KEY') || '';
+              const HIGHLEVEL_LOCATION_ID = Deno.env.get('VITE_HIGHLEVEL_LOCATION_ID') || 'QWhUZ1cxgQgSMFYGloyK';
               
               const response = await fetch(`${HIGHLEVEL_API_BASE}/contacts/${contactId}?locationId=${HIGHLEVEL_LOCATION_ID}`, {
                 method: 'PUT',
@@ -2109,9 +2355,9 @@ app.post('/make-server-2c01e603/highlevel/create-custom-field', async (c) => {
   try {
     const { name, dataType, fieldKey, placeholder } = await c.req.json();
     
-    // Hardcoded API key since environment variables aren't working
-    const HIGHLEVEL_API_KEY = 'pit-cca7bd65-1fe1-4754-88d7-a51883d631f2';
-    const HIGHLEVEL_LOCATION_ID = 'fXXJzwVf8OtANDf2M4VP';
+    // Read API key from env — test location fallback
+    const HIGHLEVEL_API_KEY = Deno.env.get('VITE_HIGHLEVEL_API_KEY') || '';
+    const HIGHLEVEL_LOCATION_ID = Deno.env.get('VITE_HIGHLEVEL_LOCATION_ID') || 'QWhUZ1cxgQgSMFYGloyK';
     
     console.log(`🔧 Creating custom field: ${fieldKey}`);
     

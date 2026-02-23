@@ -97,7 +97,7 @@ export default function FirmProfile({ onComplete, onBack, isFirstTime = false }:
       // First, ALWAYS try to load from database if user is authenticated
       if (session?.access_token) {
         const response = await fetch(
-          `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/firm-profile`,
+          `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/firm-profile`,
           {
             headers: {
               'Authorization': `Bearer ${session.access_token}`,
@@ -326,7 +326,7 @@ export default function FirmProfile({ onComplete, onBack, isFirstTime = false }:
       });
 
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/firm-profile`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/firm-profile`,
         {
           method: 'POST',
           headers: {
@@ -369,7 +369,7 @@ export default function FirmProfile({ onComplete, onBack, isFirstTime = false }:
 
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/firm-profile/change-request`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/firm-profile/change-request`,
         {
           method: 'POST',
           headers: {

@@ -10,8 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Badge } from "./ui/badge";
 import { Alert, AlertDescription } from "./ui/alert";
-import { Search, UserCheck, UserX, Eye, Send, Mail, XCircle, CheckCircle2, Clock, Key, Trash2, RefreshCw, Lock, Unlock } from "lucide-react";
-import { searchHighLevelContactByEmail, addHighLevelTags, addHighLevelNote } from "../utils/highlevel";
+import { Search, UserCheck, UserX, Eye, Send, Mail, XCircle, CheckCircle2, Clock, Key, Trash2, RefreshCw, Lock, Unlock, Wifi, WifiOff, Loader2 } from "lucide-react";
+// GHL firm contact is now created server-side during approval — no direct GHL calls needed here
 
 interface UserAccount {
   userId: string;
@@ -26,10 +26,13 @@ interface UserAccount {
   isFirstLogin: boolean;
   isFrozen?: boolean;
   workers?: any[];
+  ghlFirmContactId?: string;
   highLevelContactId?: string;
   highLevelTags?: string[];
   highLevelSyncStatus?: 'success' | 'failed' | 'pending';
   highLevelSyncError?: string;
+  firmProfileCompleted?: boolean;
+  rejectionReason?: string;
 }
 
 export default function AdminAccountManagement() {
@@ -52,6 +55,116 @@ export default function AdminAccountManagement() {
   const [generatedPassword, setGeneratedPassword] = useState("");
   const [cleanupEmail, setCleanupEmail] = useState("");
   const [showCleanupDialog, setShowCleanupDialog] = useState(false);
+  const [creatingGhlContact, setCreatingGhlContact] = useState(false);
+  const [ghlTestResult, setGhlTestResult] = useState<{
+    ok: boolean;
+    statusCode?: number;
+    locationId?: string;
+    locationName?: string;
+    keyPrefix?: string;
+    elapsedMs?: number;
+    error?: string;
+  } | null>(null);
+  const [testingGhlConn, setTestingGhlConn] = useState(false);
+
+  // Test GHL API connectivity
+  const handleTestGhlConnection = async () => {
+    if (!session?.access_token) {
+      toast.error('Not authenticated');
+      return;
+    }
+    setTestingGhlConn(true);
+    setGhlTestResult(null);
+    try {
+      const res = await fetch(`${SERVER_URL}/admin/ghl/test-connection`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      // Safely parse — if the response isn't valid JSON, show the raw text
+      const text = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        // Edge function returned non-JSON (deployment error, gateway issue, etc.)
+        console.error('Non-JSON response from test-connection:', text.substring(0, 500));
+        setGhlTestResult({ ok: false, error: `Server returned non-JSON (HTTP ${res.status}): ${text.substring(0, 200)}` });
+        toast.error(`Server error: non-JSON response (HTTP ${res.status})`);
+        return;
+      }
+      setGhlTestResult(data);
+      if (data.ok) {
+        toast.success(`GHL connected ✓ — ${data.locationName || data.locationId}`);
+      } else {
+        toast.error(`GHL connection failed: ${data.error || `HTTP ${data.statusCode}`}`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setGhlTestResult({ ok: false, error: msg });
+      toast.error(`Network error: ${msg}`);
+    } finally {
+      setTestingGhlConn(false);
+    }
+  };
+
+  // Create or recreate GHL firm contact for an account
+  const handleCreateGhlContact = async (account: UserAccount) => {
+    if (!session?.access_token) {
+      toast.error("Not authenticated");
+      return;
+    }
+
+    setCreatingGhlContact(true);
+    try {
+      console.log('Creating GHL firm contact for:', account.email, '| userId:', account.userId);
+      const url = `${SERVER_URL}/admin/accounts/${account.userId}/create-ghl-contact`;
+      console.log('POST →', url);
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({})
+      });
+
+      const responseText = await response.text();
+      console.log('Response status:', response.status, '| Body:', responseText);
+
+      let data: any;
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseErr) {
+        console.error('Failed to parse response as JSON:', responseText);
+        throw new Error(`Server returned invalid JSON (HTTP ${response.status}): ${responseText.substring(0, 200)}`);
+      }
+
+      if (!response.ok) {
+        console.error('GHL contact creation error:', data);
+        throw new Error(data.error || data.details || `Failed to create GHL contact (HTTP ${response.status})`);
+      }
+
+      toast.success(`GHL firm contact created: ${data.ghlFirmContactId}`);
+      console.log('GHL firm contact created:', data.ghlFirmContactId);
+
+      // Update the selected account in state so the UI reflects the new ID
+      if (selectedAccount && selectedAccount.userId === account.userId) {
+        setSelectedAccount({
+          ...selectedAccount,
+          ghlFirmContactId: data.ghlFirmContactId,
+          highLevelContactId: data.ghlFirmContactId,
+        });
+      }
+
+      // Refresh the accounts list
+      await fetchAccounts();
+    } catch (error) {
+      console.error('Error creating GHL contact:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to create GHL contact');
+    } finally {
+      setCreatingGhlContact(false);
+    }
+  };
 
   // Fetch accounts from backend
   useEffect(() => {
@@ -127,38 +240,10 @@ export default function AdminAccountManagement() {
       
       toast.success(`Account approved! Credentials generated for ${selectedAccount.email}`);
       
-      // Update RewardLion contact tag to status_active and log approval history
-      try {
-        console.log('🔍 Searching for RewardLion contact:', selectedAccount.email);
-        const contactId = await searchHighLevelContactByEmail(selectedAccount.email);
-        
-        if (contactId) {
-          console.log('✅ Found contact, adding bulk_status_active tag to trigger workflow (preserving history)');
-          // ADD bulk_status_active tag without removing historical tags (bulk_status_pending_approval, role_X)
-          const tagUpdateSuccess = await addHighLevelTags(contactId, ['bulk_status_active']);
-          
-          if (tagUpdateSuccess) {
-            console.log('✅ RewardLion contact tags updated successfully - Historical tags preserved');
-            
-            // Add approval note to contact history
-            const approvalNote = `Account approved by admin. Login credentials generated.\nUsername: ${data.credentials.username}\nFirm: ${selectedAccount.firmName}\nContact: ${selectedAccount.contactName}\nApproval Date: ${new Date().toLocaleString()}`;
-            
-            const noteSuccess = await addHighLevelNote(contactId, approvalNote);
-            if (noteSuccess) {
-              console.log('✅ Approval note added to RewardLion contact history');
-            } else {
-              console.warn('⚠️ Failed to add note to RewardLion contact (non-critical)');
-            }
-          } else {
-            console.warn('⚠️ Failed to update RewardLion contact tags (non-critical)');
-          }
-        } else {
-          console.warn('⚠️ No RewardLion contact found for email:', selectedAccount.email);
-        }
-      } catch (hlError) {
-        // Don't fail approval if RewardLion integration fails
-        console.warn('⚠️ RewardLion tag update failed (non-critical):', hlError);
-      }
+      // GHL firm contact is now created server-side during approval.
+      // The server endpoint creates the firm contact via POST /contacts/
+      // and stores the ghlFirmContactId on the account automatically.
+      console.log('✅ Server handled GHL firm contact creation during approval');
       
       // Refresh accounts list
       await fetchAccounts();
@@ -301,6 +386,7 @@ export default function AdminAccountManagement() {
 
   const handleViewDetails = (account: UserAccount) => {
     setSelectedAccount(account);
+    setGhlTestResult(null); // reset previous test result
     setShowDetailsDialog(true);
   };
 
@@ -979,68 +1065,128 @@ export default function AdminAccountManagement() {
                 </div>
               </div>
 
-              {/* RewardLion CRM Integration Status */}
-              {(selectedAccount.highLevelContactId || selectedAccount.highLevelSyncStatus) && (
-                <Card className="border-2 border-purple-200 bg-purple-50">
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-sm sm:text-base flex items-center gap-2">
-                      🔗 RewardLion CRM Sync
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div>
-                      <Label className="text-gray-600 text-xs sm:text-sm">Contact ID</Label>
-                      <p className="text-xs sm:text-sm mt-1 font-mono break-all">
-                        {selectedAccount.highLevelContactId || 'Not created'}
-                      </p>
+              {/* GHL Connection Test Panel */}
+              <Card className="border-2 border-blue-200 bg-blue-50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm sm:text-base flex items-center gap-2">
+                    <Wifi className="h-4 w-4 text-blue-600" />
+                    GoHighLevel — API Connection Test
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-xs text-gray-600">
+                    Run this first to confirm your API key and Location ID are valid before creating a firm contact.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={testingGhlConn}
+                    onClick={handleTestGhlConnection}
+                    className="rounded-none border-blue-400 text-blue-700 hover:bg-blue-100 w-full sm:w-auto"
+                  >
+                    {testingGhlConn ? (
+                      <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Testing...</>
+                    ) : (
+                      <><Wifi className="h-3 w-3 mr-1" />Test GHL Connection</>
+                    )}
+                  </Button>
+
+                  {ghlTestResult && (
+                    <div className={`rounded p-3 text-xs font-mono space-y-1 ${ghlTestResult.ok ? 'bg-green-50 border border-green-300 text-green-900' : 'bg-red-50 border border-red-300 text-red-900'}`}>
+                      <div className="flex items-center gap-1 font-semibold">
+                        {ghlTestResult.ok
+                          ? <><CheckCircle2 className="h-3 w-3" /> Connected successfully</>
+                          : <><WifiOff className="h-3 w-3" /> Connection failed</>
+                        }
+                      </div>
+                      {ghlTestResult.locationId && <div>Location ID: {ghlTestResult.locationId}</div>}
+                      {ghlTestResult.locationName && <div>Location Name: {ghlTestResult.locationName}</div>}
+                      {ghlTestResult.keyPrefix && <div>API Key: {ghlTestResult.keyPrefix}</div>}
+                      {ghlTestResult.elapsedMs !== undefined && <div>Response time: {ghlTestResult.elapsedMs}ms</div>}
+                      {ghlTestResult.statusCode !== undefined && <div>HTTP Status: {ghlTestResult.statusCode}</div>}
+                      {ghlTestResult.error && <div>Error: {ghlTestResult.error}</div>}
                     </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* GHL Firm Contact Section — always show so admins can create/recreate */}
+              <Card className="border-2 border-purple-200 bg-purple-50">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm sm:text-base flex items-center gap-2">
+                    🔗 GoHighLevel — Firm Contact (Parent)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div>
+                    <Label className="text-gray-600 text-xs sm:text-sm">GHL Firm Contact ID</Label>
+                    {selectedAccount.ghlFirmContactId || selectedAccount.highLevelContactId ? (
+                      <p className="text-xs sm:text-sm mt-1 font-mono break-all text-green-700 font-semibold">
+                        {selectedAccount.ghlFirmContactId || selectedAccount.highLevelContactId}
+                      </p>
+                    ) : (
+                      <p className="text-xs sm:text-sm mt-1 text-red-600 font-semibold">
+                        Not created — submissions will fail
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Create / Recreate button */}
+                  <div className="pt-2 border-t border-purple-200">
+                    <Button
+                      size="sm"
+                      disabled={creatingGhlContact}
+                      onClick={() => handleCreateGhlContact(selectedAccount)}
+                      className={`rounded-none w-full sm:w-auto ${
+                        selectedAccount.ghlFirmContactId || selectedAccount.highLevelContactId
+                          ? 'bg-yellow-500 hover:bg-yellow-600 text-white'
+                          : 'bg-purple-600 hover:bg-purple-700 text-white'
+                      }`}
+                    >
+                      {creatingGhlContact ? (
+                        <>
+                          <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                          Creating...
+                        </>
+                      ) : selectedAccount.ghlFirmContactId || selectedAccount.highLevelContactId ? (
+                        <>
+                          <RefreshCw className="h-3 w-3 mr-1" />
+                          Recreate GHL Firm Contact
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Create GHL Firm Contact
+                        </>
+                      )}
+                    </Button>
+                    <p className="text-[10px] text-gray-500 mt-1">
+                      {selectedAccount.ghlFirmContactId || selectedAccount.highLevelContactId
+                        ? 'Creates a new contact in GHL (may duplicate if old one still exists)'
+                        : 'Required before this firm can submit filings to GHL'}
+                    </p>
+                  </div>
+
+                  {selectedAccount.highLevelTags && selectedAccount.highLevelTags.length > 0 && (
                     <div>
                       <Label className="text-gray-600 text-xs sm:text-sm">Tags</Label>
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {selectedAccount.highLevelTags && selectedAccount.highLevelTags.length > 0 ? (
-                          selectedAccount.highLevelTags.map((tag, idx) => (
-                            <Badge key={idx} variant="outline" className="text-xs">{tag}</Badge>
-                          ))
-                        ) : (
-                          <span className="text-xs sm:text-sm text-gray-500">No tags</span>
-                        )}
+                        {selectedAccount.highLevelTags.map((tag, idx) => (
+                          <Badge key={idx} variant="outline" className="text-xs">{tag}</Badge>
+                        ))}
                       </div>
                     </div>
-                    <div>
-                      <Label className="text-gray-600 text-xs sm:text-sm">Sync Status</Label>
-                      <div className="mt-1">
-                        {selectedAccount.highLevelSyncStatus === 'success' && (
-                          <Badge className="bg-green-100 text-green-700 border-green-300 text-xs">
-                            <CheckCircle2 className="h-3 w-3 mr-1" />Success
-                          </Badge>
-                        )}
-                        {selectedAccount.highLevelSyncStatus === 'failed' && (
-                          <Badge className="bg-red-100 text-red-700 border-red-300 text-xs">
-                            <XCircle className="h-3 w-3 mr-1" />Failed
-                          </Badge>
-                        )}
-                        {selectedAccount.highLevelSyncStatus === 'pending' && (
-                          <Badge className="bg-yellow-100 text-yellow-700 border-yellow-300 text-xs">
-                            <Clock className="h-3 w-3 mr-1" />Pending
-                          </Badge>
-                        )}
-                        {!selectedAccount.highLevelSyncStatus && (
-                          <Badge className="bg-gray-100 text-gray-700 border-gray-300 text-xs">
-                            Unknown
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                    {selectedAccount.highLevelSyncError && (
-                      <Alert className="border-red-200 bg-red-50">
-                        <AlertDescription className="text-xs text-red-800">
-                          <strong>Error:</strong> {selectedAccount.highLevelSyncError}
-                        </AlertDescription>
-                      </Alert>
-                    )}
-                  </CardContent>
-                </Card>
-              )}
+                  )}
+
+                  {selectedAccount.highLevelSyncError && (
+                    <Alert className="border-red-200 bg-red-50">
+                      <AlertDescription className="text-xs text-red-800">
+                        <strong>Error:</strong> {selectedAccount.highLevelSyncError}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+                </CardContent>
+              </Card>
 
               {selectedAccount.workers && selectedAccount.workers[0] && (
                 <Card className="border-2 border-blue-200 bg-blue-50">

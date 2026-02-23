@@ -32,7 +32,7 @@ export default function SurveyCompletionGate({ onCompleteSurvey }: SurveyComplet
 
     try {
       const response = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/survey`,
+        `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/survey`,
         {
           method: 'POST',
           headers: {

@@ -24,7 +24,7 @@ export async function fetchGoHighLevelApiKeys(): Promise<ApiKeyConfig> {
   try {
     // First try environment variables (like the working tool does)
     const envApiKey = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_API_KEY || '') : '';
-    const envLocationId = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_LOCATION_ID || 'fXXJzwVf8OtANDf2M4VP') : 'fXXJzwVf8OtANDf2M4VP';
+    const envLocationId = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_LOCATION_ID || 'QWhUZ1cxgQgSMFYGloyK') : 'QWhUZ1cxgQgSMFYGloyK';
     
     if (envApiKey && envApiKey !== '') {
       console.log('✅ Using API keys from environment variables');
@@ -63,7 +63,7 @@ export async function fetchGoHighLevelApiKeys(): Promise<ApiKeyConfig> {
     
     cachedApiKeys = {
       apiKey: config.apiKey || config.VITE_HIGHLEVEL_API_KEY || '',
-      locationId: config.locationId || config.VITE_HIGHLEVEL_LOCATION_ID || 'fXXJzwVf8OtANDf2M4VP'
+      locationId: config.locationId || config.VITE_HIGHLEVEL_LOCATION_ID || 'QWhUZ1cxgQgSMFYGloyK'
     };
 
     return cachedApiKeys;
@@ -79,7 +79,7 @@ export async function fetchGoHighLevelApiKeys(): Promise<ApiKeyConfig> {
 export async function saveGoHighLevelApiKeys(apiKey: string, locationId: string): Promise<void> {
   try {
     const response = await fetch(
-      `https://${projectId}.supabase.co/functions/v1/make-server-2c01e603/kv/set`,
+      `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/kv/set`,
       {
         method: 'POST',
         headers: {
