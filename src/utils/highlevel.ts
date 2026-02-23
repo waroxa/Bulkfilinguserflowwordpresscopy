@@ -2,12 +2,17 @@
 // Version: 2021-07-28
 
 import { projectId } from './supabase/info';
+import { fetchGoHighLevelApiKeys } from './highlevelApiKeys';
 
 // HighLevel API Configuration
 const HIGHLEVEL_API_BASE = 'https://services.leadconnectorhq.com';
-const HIGHLEVEL_API_KEY = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_API_KEY || '') : '';
-const HIGHLEVEL_LOCATION_ID = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_LOCATION_ID || 'QWhUZ1cxgQgSMFYGloyK') : 'QWhUZ1cxgQgSMFYGloyK';
 const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-339e423c`;
+
+// Lazy-loaded API keys (fetched from server on first use)
+async function getGHLConfig() {
+  const config = await fetchGoHighLevelApiKeys();
+  return { apiKey: config.apiKey, locationId: config.locationId };
+}
 
 // Audit Log Helper - Send logs to backend for storage
 async function sendAuditLog(logData: {
@@ -88,7 +93,8 @@ export function parseFullName(fullName: string): { firstName: string; lastName: 
  * @param contactData - Contact data to create/update
  */
 export async function createHighLevelContact(contactData: HighLevelContact): Promise<string | null> {
-  if (!HIGHLEVEL_API_KEY || !HIGHLEVEL_LOCATION_ID) {
+  const config = await getGHLConfig();
+  if (!config.apiKey || !config.locationId) {
     console.warn('⚠️ HighLevel API key not configured. Skipping contact creation.');
     return null;
   }
@@ -98,7 +104,7 @@ export async function createHighLevelContact(contactData: HighLevelContact): Pro
 
     // Build base request body
     const requestBody: any = {
-      locationId: HIGHLEVEL_LOCATION_ID,
+      locationId: config.locationId,
       firstName: contactData.firstName,
       lastName: contactData.lastName,
       email: contactData.email
@@ -180,7 +186,7 @@ export async function createHighLevelContact(contactData: HighLevelContact): Pro
       method: 'POST',
       headers: {
         'Accept': 'application/json',
-        'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+        'Authorization': `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
         'Version': '2021-07-28'
       },
@@ -303,7 +309,8 @@ export async function updateHighLevelContact(
   contactId: string, 
   updates: Partial<HighLevelContact>
 ): Promise<boolean> {
-  if (!HIGHLEVEL_API_KEY || !HIGHLEVEL_LOCATION_ID) {
+  const config = await getGHLConfig();
+  if (!config.apiKey || !config.locationId) {
     console.warn('⚠️ HighLevel API key not configured. Skipping contact update.');
     return false;
   }
@@ -365,11 +372,11 @@ export async function updateHighLevelContact(
 
     console.log('📤 Final update payload:', JSON.stringify(requestBody, null, 2));
 
-    const response = await fetch(`${HIGHLEVEL_API_BASE}/contacts/${contactId}?locationId=${HIGHLEVEL_LOCATION_ID}`, {
+    const response = await fetch(`${HIGHLEVEL_API_BASE}/contacts/${contactId}?locationId=${config.locationId}`, {
       method: 'PUT',
       headers: {
         'Accept': 'application/json',
-        'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+        'Authorization': `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
         'Version': '2021-07-28'
       },
@@ -400,24 +407,25 @@ export async function updateHighLevelContact(
  * @returns Contact ID if found, null otherwise
  */
 export async function searchHighLevelContactByEmail(email: string): Promise<string | null> {
-  if (!HIGHLEVEL_API_KEY || !HIGHLEVEL_LOCATION_ID) {
+  const config = await getGHLConfig();
+  if (!config.apiKey || !config.locationId) {
     console.warn('⚠️ HighLevel API key not configured. Skipping contact lookup.');
     return null;
   }
 
   try {
     console.log('🔍 Searching HighLevel for contact:', email);
-    console.log('🔍 Location ID:', HIGHLEVEL_LOCATION_ID);
+    console.log('🔍 Location ID:', config.locationId);
 
     // Use GET /contacts endpoint with query parameter to search by email
     // This is the correct approach - search through contacts list filtered by email
     const response = await fetch(
-      `${HIGHLEVEL_API_BASE}/contacts/?locationId=${HIGHLEVEL_LOCATION_ID}&query=${encodeURIComponent(email)}`,
+      `${HIGHLEVEL_API_BASE}/contacts/?locationId=${config.locationId}&query=${encodeURIComponent(email)}`,
       {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
-          'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+          'Authorization': `Bearer ${config.apiKey}`,
           'Version': '2021-07-28'
         }
       }
@@ -463,7 +471,8 @@ export async function searchHighLevelContactByEmail(email: string): Promise<stri
  * @param tags - Array of tags to add
  */
 export async function addHighLevelTags(contactId: string, tags: string[]): Promise<boolean> {
-  if (!HIGHLEVEL_API_KEY || !HIGHLEVEL_LOCATION_ID) {
+  const config = await getGHLConfig();
+  if (!config.apiKey || !config.locationId) {
     console.warn('⚠️ HighLevel API key not configured. Skipping tag addition.');
     return false;
   }
@@ -472,11 +481,11 @@ export async function addHighLevelTags(contactId: string, tags: string[]): Promi
     console.log('🏷️ Adding tags to HighLevel contact:', contactId, tags);
 
     // First, fetch existing contact to get current tags
-    const getResponse = await fetch(`${HIGHLEVEL_API_BASE}/contacts/${contactId}?locationId=${HIGHLEVEL_LOCATION_ID}`, {
+    const getResponse = await fetch(`${HIGHLEVEL_API_BASE}/contacts/${contactId}?locationId=${config.locationId}`, {
       method: 'GET',
       headers: {
         'Accept': 'application/json',
-        'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+        'Authorization': `Bearer ${config.apiKey}`,
         'Version': '2021-07-28'
       }
     });
@@ -497,11 +506,11 @@ export async function addHighLevelTags(contactId: string, tags: string[]): Promi
     console.log('📋 Merged tags:', mergedTags);
 
     // Now update contact with merged tags
-    const response = await fetch(`${HIGHLEVEL_API_BASE}/contacts/${contactId}?locationId=${HIGHLEVEL_LOCATION_ID}`, {
+    const response = await fetch(`${HIGHLEVEL_API_BASE}/contacts/${contactId}?locationId=${config.locationId}`, {
       method: 'PUT',
       headers: {
         'Accept': 'application/json',
-        'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+        'Authorization': `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
         'Version': '2021-07-28'
       },
@@ -529,7 +538,8 @@ export async function addHighLevelTags(contactId: string, tags: string[]): Promi
  * @param note - Note text
  */
 export async function addHighLevelNote(contactId: string, note: string): Promise<boolean> {
-  if (!HIGHLEVEL_API_KEY || !HIGHLEVEL_LOCATION_ID) {
+  const config = await getGHLConfig();
+  if (!config.apiKey || !config.locationId) {
     console.warn('⚠️ HighLevel API key not configured. Skipping note addition.');
     return false;
   }
@@ -541,13 +551,13 @@ export async function addHighLevelNote(contactId: string, note: string): Promise
       method: 'POST',
       headers: {
         'Accept': 'application/json',
-        'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+        'Authorization': `Bearer ${config.apiKey}`,
         'Content-Type': 'application/json',
         'Version': '2021-07-28'
       },
       body: JSON.stringify({
         body: note,
-        userId: HIGHLEVEL_LOCATION_ID
+        userId: config.locationId
       })
     });
 
@@ -570,7 +580,8 @@ export async function addHighLevelNote(contactId: string, note: string): Promise
  * @returns Array of custom fields
  */
 export async function getHighLevelCustomFields(): Promise<any[]> {
-  if (!HIGHLEVEL_API_KEY || !HIGHLEVEL_LOCATION_ID) {
+  const config = await getGHLConfig();
+  if (!config.apiKey || !config.locationId) {
     console.warn('⚠️ HighLevel API key not configured. Cannot fetch custom fields.');
     return [];
   }
@@ -579,12 +590,12 @@ export async function getHighLevelCustomFields(): Promise<any[]> {
     console.log('📋 Fetching HighLevel custom fields...');
 
     const response = await fetch(
-      `${HIGHLEVEL_API_BASE}/locations/${HIGHLEVEL_LOCATION_ID}/customFields`,
+      `${HIGHLEVEL_API_BASE}/locations/${config.locationId}/customFields`,
       {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
-          'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+          'Authorization': `Bearer ${config.apiKey}`,
           'Version': '2021-07-28'
         }
       }
@@ -624,7 +635,8 @@ export async function submitBulkFilingToHighLevel(
   },
   ipAddress?: string
 ): Promise<{success: boolean, submissionNumber: string}> {
-  if (!HIGHLEVEL_API_KEY || !HIGHLEVEL_LOCATION_ID) {
+  const config = await getGHLConfig();
+  if (!config.apiKey || !config.locationId) {
     console.warn('⚠️ HighLevel API key not configured. Skipping bulk filing submission.');
     return {success: false, submissionNumber: ''};
   }
@@ -668,7 +680,7 @@ export async function submitBulkFilingToHighLevel(
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+          'Authorization': `Bearer ${config.apiKey}`,
           'Version': '2021-07-28'
         },
         body: JSON.stringify({
@@ -849,7 +861,8 @@ export interface FirmSubmission {
  * @returns Array of FirmSubmission objects
  */
 export async function fetchAllBulkFilingSubmissions(): Promise<FirmSubmission[]> {
-  if (!HIGHLEVEL_API_KEY || !HIGHLEVEL_LOCATION_ID) {
+  const config = await getGHLConfig();
+  if (!config.apiKey || !config.locationId) {
     console.warn('⚠️ HighLevel API not configured');
     return [];
   }
@@ -859,11 +872,11 @@ export async function fetchAllBulkFilingSubmissions(): Promise<FirmSubmission[]>
 
     // Fetch all contacts from the location
     const response = await fetch(
-      `${HIGHLEVEL_API_BASE}/contacts/?locationId=${HIGHLEVEL_LOCATION_ID}&limit=100`,
+      `${HIGHLEVEL_API_BASE}/contacts/?locationId=${config.locationId}&limit=100`,
       {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+          'Authorization': `Bearer ${config.apiKey}`,
           'Version': '2021-07-28'
         }
       }
@@ -972,7 +985,8 @@ export async function updateSubmissionStatus(
   status: string,
   notes?: string
 ): Promise<boolean> {
-  if (!HIGHLEVEL_API_KEY || !HIGHLEVEL_LOCATION_ID) {
+  const config = await getGHLConfig();
+  if (!config.apiKey || !config.locationId) {
     console.warn('⚠️ HighLevel API not configured');
     return false;
   }
@@ -996,7 +1010,7 @@ export async function updateSubmissionStatus(
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${HIGHLEVEL_API_KEY}`,
+          'Authorization': `Bearer ${config.apiKey}`,
           'Version': '2021-07-28'
         },
         body: JSON.stringify(updateData)

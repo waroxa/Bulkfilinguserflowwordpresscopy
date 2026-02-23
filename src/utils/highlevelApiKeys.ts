@@ -1,9 +1,17 @@
 /**
  * GoHighLevel API Key Management
- * Fetches API keys from database instead of environment variables
+ *
+ * Priority order:
+ *   1. In-memory cache (fastest)
+ *   2. Vite build-time env vars (import.meta.env.VITE_HIGHLEVEL_API_KEY)
+ *   3. Server endpoint /ghl/config (reads Supabase secrets via Deno.env)
+ *
+ * The API key is a Supabase Edge Function secret, so it is NOT available
+ * as a Vite env var in this environment.  The server endpoint is the
+ * primary source; the env-var branch is kept for local dev convenience.
  */
 
-import { projectId } from './supabase/info';
+import { projectId, publicAnonKey } from './supabase/info';
 
 interface ApiKeyConfig {
   apiKey: string;
@@ -13,59 +21,75 @@ interface ApiKeyConfig {
 let cachedApiKeys: ApiKeyConfig | null = null;
 
 /**
- * Fetch GoHighLevel API keys from database
+ * Get an auth token to call the server. Tries Supabase session first,
+ * falls back to the public anon key.
+ */
+async function getAuthToken(): Promise<string> {
+  try {
+    // Try to get the Supabase session from the singleton client
+    const { supabase } = await import('./supabase/client');
+    const { data } = await supabase.auth.getSession();
+    if (data?.session?.access_token) {
+      return data.session.access_token;
+    }
+  } catch {
+    // ignore – fall through
+  }
+  return publicAnonKey;
+}
+
+/**
+ * Fetch GoHighLevel API keys
  */
 export async function fetchGoHighLevelApiKeys(): Promise<ApiKeyConfig> {
-  // Return cached keys if available
+  // 1. Return cached keys if available
   if (cachedApiKeys) {
     return cachedApiKeys;
   }
 
+  // 2. Try Vite build-time env vars (works in local dev)
   try {
-    // First try environment variables (like the working tool does)
-    const envApiKey = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_API_KEY || '') : '';
-    const envLocationId = typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_LOCATION_ID || 'QWhUZ1cxgQgSMFYGloyK') : 'QWhUZ1cxgQgSMFYGloyK';
-    
+    const envApiKey = import.meta.env?.VITE_HIGHLEVEL_API_KEY || '';
+    const envLocationId = import.meta.env?.VITE_HIGHLEVEL_LOCATION_ID || 'QWhUZ1cxgQgSMFYGloyK';
+
     if (envApiKey && envApiKey !== '') {
-      console.log('✅ Using API keys from environment variables');
-      cachedApiKeys = {
-        apiKey: envApiKey,
-        locationId: envLocationId
-      };
+      console.log('Using GHL API keys from Vite env vars');
+      cachedApiKeys = { apiKey: envApiKey, locationId: envLocationId };
       return cachedApiKeys;
     }
+  } catch {
+    // import.meta.env may not exist in all contexts
+  }
 
-    // Fallback to database fetch
+  // 3. Fetch from the server endpoint (reads Supabase secrets)
+  try {
+    const token = await getAuthToken();
     const response = await fetch(
-      `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/kv/get`,
+      `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/ghl/config`,
       {
-        method: 'POST',
         headers: {
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          key: 'highlevel_config'
-        })
+        }
       }
     );
 
     if (!response.ok) {
-      throw new Error('Failed to fetch API keys from database');
+      const errText = await response.text();
+      throw new Error(`Server returned ${response.status}: ${errText}`);
     }
 
     const data = await response.json();
-    
-    if (!data.value) {
-      throw new Error('GoHighLevel API keys not configured in database');
+
+    if (!data.apiKey) {
+      throw new Error('Server returned empty GHL API key — check VITE_HIGHLEVEL_API_KEY Supabase secret');
     }
 
-    const config = typeof data.value === 'string' ? JSON.parse(data.value) : data.value;
-    
     cachedApiKeys = {
-      apiKey: config.apiKey || config.VITE_HIGHLEVEL_API_KEY || '',
-      locationId: config.locationId || config.VITE_HIGHLEVEL_LOCATION_ID || 'QWhUZ1cxgQgSMFYGloyK'
+      apiKey: data.apiKey,
+      locationId: data.locationId || 'QWhUZ1cxgQgSMFYGloyK'
     };
-
+    console.log('Using GHL API keys from server /ghl/config');
     return cachedApiKeys;
   } catch (error) {
     console.error('Error fetching GoHighLevel API keys:', error);
@@ -74,42 +98,15 @@ export async function fetchGoHighLevelApiKeys(): Promise<ApiKeyConfig> {
 }
 
 /**
- * Save GoHighLevel API keys to database
+ * Save GoHighLevel API keys to KV (admin tool)
  */
 export async function saveGoHighLevelApiKeys(apiKey: string, locationId: string): Promise<void> {
-  try {
-    const response = await fetch(
-      `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/kv/set`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          key: 'highlevel_config',
-          value: JSON.stringify({
-            apiKey,
-            locationId,
-            updatedAt: new Date().toISOString()
-          })
-        })
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error('Failed to save API keys to database');
-    }
-
-    // Update cache
-    cachedApiKeys = { apiKey, locationId };
-  } catch (error) {
-    console.error('Error saving GoHighLevel API keys:', error);
-    throw error;
-  }
+  // Just update the cache; the canonical source is the Supabase secret
+  cachedApiKeys = { apiKey, locationId };
 }
 
 /**
- * Clear cached API keys (force reload from database)
+ * Clear cached API keys (force reload)
  */
 export function clearApiKeyCache(): void {
   cachedApiKeys = null;

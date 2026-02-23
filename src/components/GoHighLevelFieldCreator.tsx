@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Alert, AlertDescription } from './ui/alert';
@@ -6,10 +6,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Badge } from './ui/badge';
 import { CheckCircle, AlertCircle, Loader2, Plus, FolderPlus, Zap } from 'lucide-react';
-
-// Read from env vars — same source as highlevelApiKeys.ts
-const getApiKey = () => typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_API_KEY || '') : '';
-const getLocationId = () => typeof import.meta.env !== 'undefined' ? (import.meta.env.VITE_HIGHLEVEL_LOCATION_ID || 'QWhUZ1cxgQgSMFYGloyK') : 'QWhUZ1cxgQgSMFYGloyK';
+import { fetchGoHighLevelApiKeys } from '../utils/highlevelApiKeys';
 
 const HIGHLEVEL_BASE_URL = "https://services.leadconnectorhq.com";
 
@@ -185,10 +182,22 @@ export default function GoHighLevelFieldCreator() {
   const [customLocationId, setCustomLocationId] = useState('');
   const [customApiKey, setCustomApiKey] = useState('');
   const [showConfig, setShowConfig] = useState(false);
+  const [serverApiKey, setServerApiKey] = useState('');
+  const [serverLocationId, setServerLocationId] = useState('QWhUZ1cxgQgSMFYGloyK');
 
-  // Resolve effective credentials
-  const effectiveApiKey = customApiKey || getApiKey();
-  const effectiveLocationId = customLocationId || getLocationId();
+  // Load API keys from server on mount
+  useEffect(() => {
+    fetchGoHighLevelApiKeys()
+      .then(config => {
+        setServerApiKey(config.apiKey);
+        setServerLocationId(config.locationId);
+      })
+      .catch(() => { /* will use manual entry */ });
+  }, []);
+
+  // Resolve effective credentials (manual override > server-fetched)
+  const effectiveApiKey = customApiKey || serverApiKey;
+  const effectiveLocationId = customLocationId || serverLocationId;
 
   const addLog = (msg: string) => {
     setProgress(prev => [...prev, msg]);

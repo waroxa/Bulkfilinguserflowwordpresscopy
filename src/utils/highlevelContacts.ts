@@ -1,21 +1,48 @@
 /**
  * GoHighLevel Contact Management for NYLTA Bulk Filing System
  * Handles: Firm contacts, Client contacts, Order confirmations
- * 
- * KEY MAPPING UPDATE (Feb 2026 — Maria's simplified GHL keys):
- * - All verbose folder-style keys replaced with simplified keys (e.g. ca1_full_name, bo1_full_name)
- * - Added CA3 support (up to 3 company applicants)
- * - Added attestation_initials field
- * - Added firm_country, firm_street_address, firm_zip_code, contact_name, contact_email, contact_phone
- * - Added ACH payment fields (masked for security)
- * - Added payment_date, batch_id to order tracking
- * - BO prefix simplified: bo1_, bo2_, ..., bo9_ (was beneficial_owner_-_...)
- * - CA prefix simplified: ca1_, ca2_, ca3_ (was company_applicant_-_...)
+ *
+ * FIELD KEY ALIGNMENT (Feb 2026 — Corrected to match GHL custom fields exactly):
+ *
+ * NAMING CONVENTION:
+ *   - Person prefixes use DOUBLE underscore: bo1__full_name, ca2__city
+ *   - Compound concepts use DOUBLE underscore: position__title, date_of_formation__registration
+ *   - Ownership has TRAILING underscore: bo1__ownership_
+ *   - Multi-word fields use SINGLE underscore: full_name, date_of_birth
+ *
+ * ENDPOINT: /contacts/upsert (NOT /contacts/)
+ *
+ * FOLDERS & IDS:
+ *   Account Details:           gPFrau7XTO0ED3AEDPdV
+ *   Order / Submission:        ejqBRb6QeM8IQg7pTPAV
+ *   Filing Information:        G2r5TJba4JBWhxHQIP78
+ *   Beneficial Owners:         CMngkSX1yJOBZRfWTaiV
+ *   Company Applicants:        hN5bDkEhdgVNKcbNlBc2
+ *   Consents:                  gvS4YgeUoww5dqZ7V3Or
+ *   Exemption & Attestation:   9JmueuzHPqdzNk5Jno4v
+ *   Others (Survey):           plxSWD6yh7tpmHmT1inV
  */
 
 import { fetchGoHighLevelApiKeys } from './highlevelApiKeys';
+import { projectId } from './supabase/info';
 
 const HIGHLEVEL_BASE_URL = 'https://services.leadconnectorhq.com';
+const SUBMISSION_LOG_URL = `https://${projectId}.supabase.co/functions/v1/make-server-339e423c/submissions/log`;
+
+// Fire-and-forget submission log helper
+function logSubmission(accessToken: string | null, data: Record<string, any>) {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
+    fetch(SUBMISSION_LOG_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(data)
+    }).catch(err => console.warn('⚠️ Submission log send failed:', err));
+  } catch {
+    // swallow — logging is non-critical
+  }
+}
 
 // ─── TYPE DEFINITIONS ───────────────────────────────────────────────────────
 
@@ -31,6 +58,7 @@ export interface FirmContactData {
   firmZipCode?: string;
   firmCountry?: string;
   confirmationNumber: string;
+  professionalType?: string;
 }
 
 export interface ClientContactData {
@@ -38,47 +66,51 @@ export interface ClientContactData {
   fictitiousName?: string;
   nydosId: string;
   ein: string;
-  formationDate: string;
+  formationDate: string;            // YYYY-MM-DD
   countryOfFormation: string;
   stateOfFormation?: string;
   entityType: 'domestic' | 'foreign';
-  dateAuthorityFiledNY?: string;
+  dateAuthorityFiledNY?: string;    // YYYY-MM-DD — required if foreign
   contactEmail: string;
   serviceType: 'monitoring' | 'filing';
   filingType: 'disclosure' | 'exemption';
-  
-  // Company address fields (parsed)
+
+  // Company address fields
   streetAddress?: string;
   city?: string;
   addressState?: string;
   addressCountry?: string;
   addressZipCode?: string;
-  
-  // Exemption-specific
+
+  // Exemption-specific (Folder: Exemption & Attestation — 9JmueuzHPqdzNk5Jno4v)
   exemptionCategory?: string;
   exemptionExplanation?: string;
-  
-  // Attestation fields
+  exemptionAttestationFullName?: string;
+  exemptionAttestationTitle?: string;
+  exemptionAttestationDate?: string;  // YYYY-MM-DD
+
+  // Consent attestation fields (Folder: Consents — gvS4YgeUoww5dqZ7V3Or)
   attestationSignature?: string;
   attestationFullName?: string;
   attestationInitials?: string;
   attestationTitle?: string;
-  attestationDate?: string;
-  
+  attestationDate?: string;          // YYYY-MM-DD
+
   // Parent firm linkage (set by createBulkClientContacts)
   parentFirmId?: string;
   parentFirmName?: string;
   parentFirmConfirmation?: string;
-  
-  // Batch tracking
+
+  // Batch/order tracking
   batchId?: string;
-  
-  // Company Applicants (up to 3)
+  orderNumber?: string;
+  submissionNumber?: string;
+
+  // Company Applicants (up to 3) — hidden when filingType === 'exemption'
   companyApplicants?: Array<{
     fullName?: string;
-    dob?: string;
-    address?: string;       // Pipe-delimited: street|city|state|zip|country|type|email
-    streetAddress?: string;  // Pre-parsed
+    dob?: string;                    // YYYY-MM-DD
+    streetAddress?: string;
     city?: string;
     state?: string;
     zipCode?: string;
@@ -88,37 +120,28 @@ export interface ClientContactData {
     titleOrRole?: string;
     idType?: string;
     idNumber?: string;
-    idExpirationDate?: string;
+    idExpirationDate?: string;       // YYYY-MM-DD
     issuingCountry?: string;
     issuingState?: string;
-    role?: string;           // Legacy field name
   }>;
-  
+
   // Beneficial Owners (up to 9)
   beneficialOwners?: Array<{
     fullName?: string;
-    dob?: string;
-    address?: string;        // Pipe-delimited: street|city|state|zip|country|type
-    addressLine1?: string;
-    addressLine2?: string;
-    addressType?: 'Residential' | 'Business' | string;
-    streetAddress?: string;  // Pre-parsed
+    dob?: string;                    // YYYY-MM-DD
+    streetAddress?: string;
     city?: string;
     state?: string;
     zipCode?: string;
     country?: string;
-    ssn?: string;
+    addressType?: 'Residential' | 'Business' | string;
     idType?: string;
     idNumber?: string;
-    idExpirationDate?: string;
+    idExpirationDate?: string;       // YYYY-MM-DD
     issuingCountry?: string;
     issuingState?: string;
     ownershipPercentage?: number | string;
-    ownership?: number;
-    position?: string;       // Correct field name per types.ts
-    role?: string;           // Legacy fallback
-    isControlPerson?: boolean;
-    isOrganizer?: boolean;
+    position?: string;
   }>;
 }
 
@@ -127,16 +150,19 @@ export interface OrderConfirmationData {
   firmName: string;
   confirmationNumber: string;
   orderNumber: string;
-  submissionDate: string;
-  paymentDate?: string;
+  submissionNumber?: string;
+  submissionDate: string;            // YYYY-MM-DD
+  paymentDate?: string;              // YYYY-MM-DD
   batchId?: string;
   amountPaid: number;
+  paymentAmount?: number;
   clientCount: number;
   serviceType?: 'monitoring' | 'filing' | 'mixed';
+  contactEmail?: string;
   // ACH payment data (only masked values stored in GHL)
-  achAccountType?: string;       // 'checking' or 'savings'
-  achRoutingLast4?: string;      // Last 4 of routing number
-  achAccountLast4?: string;      // Last 4 of account number
+  achAccountType?: string;           // 'checking' or 'savings'
+  achRoutingLast4?: string;          // Last 4 of routing number
+  achAccountLast4?: string;          // Last 4 of account number
   achBillingStreet?: string;
   achBillingCity?: string;
   achBillingState?: string;
@@ -158,14 +184,11 @@ interface ParsedAddress {
   state: string;
   zipCode: string;
   country: string;
-  type: string;    // address type or extra field
-  extra: string;   // email or other trailing data
 }
 
 /**
- * Parse a pipe-delimited address string into separate components.
- * Format: "street|city|state|zip|country|type|extra"
- * Also checks for pre-parsed separate fields on the object.
+ * Parse address from separate pre-parsed fields, or from a legacy
+ * pipe-delimited string ("street|city|state|zip|country").
  */
 function parseAddress(
   pipeDelimited?: string,
@@ -175,86 +198,114 @@ function parseAddress(
   preZip?: string,
   preCountry?: string
 ): ParsedAddress {
-  // If pre-parsed fields exist, prefer them
+  // Prefer pre-parsed fields
   if (preStreet || preCity || preState || preZip || preCountry) {
     return {
       street: preStreet || '',
       city: preCity || '',
       state: preState || '',
       zipCode: preZip || '',
-      country: preCountry || '',
-      type: '',
-      extra: ''
+      country: preCountry || ''
     };
   }
-  
-  // Parse pipe-delimited string
+
+  // Fallback: parse legacy pipe-delimited string
   if (!pipeDelimited || pipeDelimited.trim() === '' || pipeDelimited === '||||||') {
-    return { street: '', city: '', state: '', zipCode: '', country: '', type: '', extra: '' };
+    return { street: '', city: '', state: '', zipCode: '', country: '' };
   }
-  
+
   const parts = pipeDelimited.split('|');
   return {
     street: (parts[0] || '').trim(),
     city: (parts[1] || '').trim(),
     state: (parts[2] || '').trim(),
     zipCode: (parts[3] || '').trim(),
-    country: (parts[4] || '').trim(),
-    type: (parts[5] || '').trim(),
-    extra: (parts[6] || '').trim()
+    country: (parts[4] || '').trim()
   };
 }
 
 // ─── COMPANY APPLICANT FIELD BUILDER ────────────────────────────────────────
 
 /**
- * Build custom fields for a company applicant using Maria's simplified keys.
- * CA1 = ca1_*, CA2 = ca2_*, CA3 = ca3_*
+ * Build GHL custom fields for a company applicant.
+ * Uses DOUBLE underscore after prefix: ca1__full_name, ca2__city, etc.
+ *
+ * GHL Folder: NYLTA | Bulk Filing | Company Applicants
+ * Folder ID: hN5bDkEhdgVNKcbNlBc2
  */
 function buildCompanyApplicantFields(
   applicant: NonNullable<ClientContactData['companyApplicants']>[0],
   caNum: number
 ): Array<{ key: string; field_value: string }> {
-  const prefix = `ca${caNum}`;
-  
-  // Parse pipe-delimited address into components
-  const addr = parseAddress(
-    applicant.address,
-    applicant.streetAddress,
-    applicant.city,
-    applicant.state,
-    applicant.zipCode,
-    applicant.country
-  );
-  
+  const p = `ca${caNum}`;  // ca1, ca2, or ca3
+
   return [
-    { key: `${prefix}_full_name`, field_value: applicant.fullName || '' },
-    { key: `${prefix}_dob`, field_value: applicant.dob || '' },
-    // Parsed address components
-    { key: `${prefix}_street_address`, field_value: addr.street },
-    { key: `${prefix}_city`, field_value: addr.city },
-    { key: `${prefix}_state`, field_value: addr.state },
-    { key: `${prefix}_zip_code`, field_value: addr.zipCode },
-    { key: `${prefix}_country`, field_value: addr.country },
-    // Identity verification
-    { key: `${prefix}_id_type`, field_value: applicant.idType || '' },
-    { key: `${prefix}_id_number`, field_value: applicant.idNumber || '' },
-    { key: `${prefix}_id_expiration_date`, field_value: applicant.idExpirationDate || '' },
-    { key: `${prefix}_issuing_country`, field_value: applicant.issuingCountry || '' },
-    { key: `${prefix}_issuing_state`, field_value: applicant.issuingState || '' },
-    // Title/Role
-    { key: `${prefix}_title_or_role`, field_value: applicant.titleOrRole || applicant.role || '' },
-    // Phone & Email
-    { key: `${prefix}_phone`, field_value: applicant.phoneNumber || '' },
-    { key: `${prefix}_email`, field_value: applicant.email || addr.extra || '' }
+    { key: `${p}__full_name`,          field_value: applicant.fullName || '' },
+    { key: `${p}__date_of_birth`,      field_value: applicant.dob || '' },
+    { key: `${p}__street_address`,     field_value: applicant.streetAddress || '' },
+    { key: `${p}__city`,               field_value: applicant.city || '' },
+    { key: `${p}__state`,              field_value: applicant.state || '' },
+    { key: `${p}__zip_code`,           field_value: applicant.zipCode || '' },
+    { key: `${p}__country`,            field_value: applicant.country || '' },
+    { key: `${p}__phone`,              field_value: applicant.phoneNumber || '' },
+    { key: `${p}__email`,              field_value: applicant.email || '' },
+    { key: `${p}__title_or_role`,      field_value: applicant.titleOrRole || '' },
+    { key: `${p}__id_type`,            field_value: applicant.idType || '' },
+    { key: `${p}__id_number`,          field_value: applicant.idNumber || '' },
+    { key: `${p}__id_expiration_date`, field_value: applicant.idExpirationDate || '' },
+    { key: `${p}__issuing_country`,    field_value: applicant.issuingCountry || '' },
+    { key: `${p}__issuing_state`,      field_value: applicant.issuingState || '' }
+  ];
+}
+
+// ─── BENEFICIAL OWNER FIELD BUILDER ─────────────────────────────────────────
+
+/**
+ * Build GHL custom fields for a beneficial owner.
+ * Uses DOUBLE underscore after prefix: bo1__full_name, bo3__city, etc.
+ * NOTE: ownership has TRAILING underscore: bo1__ownership_
+ * NOTE: position uses double underscore: bo1__position__title
+ *
+ * GHL Folder: NYLTA | Bulk Filing | Beneficial Owners
+ * Folder ID: CMngkSX1yJOBZRfWTaiV
+ */
+function buildBeneficialOwnerFields(
+  owner: NonNullable<ClientContactData['beneficialOwners']>[0],
+  boNum: number
+): Array<{ key: string; field_value: string }> {
+  const p = `bo${boNum}`;  // bo1 through bo9
+
+  const ownershipPct = owner.ownershipPercentage?.toString() || '0';
+
+  return [
+    { key: `${p}__full_name`,          field_value: owner.fullName || '' },
+    { key: `${p}__date_of_birth`,      field_value: owner.dob || '' },
+    { key: `${p}__street_address`,     field_value: owner.streetAddress || '' },
+    { key: `${p}__city`,               field_value: owner.city || '' },
+    { key: `${p}__state`,              field_value: owner.state || '' },
+    { key: `${p}__zip_code`,           field_value: owner.zipCode || '' },
+    { key: `${p}__country`,            field_value: owner.country || '' },
+    { key: `${p}__address_type`,       field_value: owner.addressType || '' },
+    { key: `${p}__id_type`,            field_value: owner.idType || '' },
+    { key: `${p}__id_number`,          field_value: owner.idNumber || '' },
+    { key: `${p}__id_expiration_date`, field_value: owner.idExpirationDate || '' },
+    { key: `${p}__issuing_country`,    field_value: owner.issuingCountry || '' },
+    { key: `${p}__issuing_state`,      field_value: owner.issuingState || '' },
+    // NOTE: trailing underscore on ownership_ is intentional — matches GHL exactly
+    { key: `${p}__ownership_`,         field_value: ownershipPct },
+    // NOTE: double underscore before "title" is intentional — matches GHL exactly
+    { key: `${p}__position__title`,    field_value: owner.position || '' }
   ];
 }
 
 // ─── FIRM CONTACT ───────────────────────────────────────────────────────────
 
 /**
- * Create or update a Firm Contact in GoHighLevel
- * Returns the contact ID for linking clients
+ * Create or update a Firm Contact in GoHighLevel via /contacts/upsert.
+ * Returns the contact ID for linking clients.
+ *
+ * GHL Folder: NYLTA | Bulk Filing | Account Details
+ * Folder ID: gPFrau7XTO0ED3AEDPdV
  */
 export async function createFirmContact(firmData: FirmContactData): Promise<string> {
   const config = await fetchGoHighLevelApiKeys();
@@ -269,8 +320,8 @@ export async function createFirmContact(firmData: FirmContactData): Promise<stri
   }
 
   try {
-    console.log('Creating firm contact in GoHighLevel:', firmData.firmName);
-    
+    console.log('Creating/upserting firm contact in GoHighLevel:', firmData.firmName);
+
     const payload = {
       locationId: config.locationId,
       firstName: firmData.contactName.split(' ')[0] || firmData.firmName,
@@ -289,23 +340,20 @@ export async function createFirmContact(firmData: FirmContactData): Promise<stri
         'nylta_new_account'  // Workflow trigger tag for admin approval flow
       ],
       customFields: [
-        // Maria's simplified firm field keys
-        { key: 'firm_name', field_value: firmData.firmName },
-        { key: 'contact_name', field_value: firmData.contactName },
-        { key: 'contact_email', field_value: firmData.contactEmail },
-        { key: 'contact_phone', field_value: firmData.contactPhone || '' },
-        { key: 'firm_ein', field_value: firmData.firmEIN },
-        { key: 'firm_street_address', field_value: firmData.firmAddress || '' },
-        { key: 'firm_city', field_value: firmData.firmCity || '' },
-        { key: 'firm_state', field_value: firmData.firmState || '' },
-        { key: 'firm_zip_code', field_value: firmData.firmZipCode || '' },
-        { key: 'firm_country', field_value: firmData.firmCountry || 'United States' },
+        // Account Details folder (gPFrau7XTO0ED3AEDPdV)
+        { key: 'account_type',             field_value: 'firm' },
+        { key: 'firm_name',                field_value: firmData.firmName },
+        { key: 'firm_ein',                 field_value: firmData.firmEIN },
         { key: 'firm_confirmation_number', field_value: firmData.confirmationNumber },
-        { key: 'account_type', field_value: 'firm' }
+        { key: 'professional_type',        field_value: firmData.professionalType || '' },
+        { key: 'firm_city',                field_value: firmData.firmCity || '' },
+        { key: 'firm_state',               field_value: firmData.firmState || '' },
+        { key: 'firm_profile_completed',   field_value: 'true' }
       ]
     };
 
-    const response = await fetch(`${HIGHLEVEL_BASE_URL}/contacts/`, {
+    // Use /contacts/upsert — NOT /contacts/
+    const response = await fetch(`${HIGHLEVEL_BASE_URL}/contacts/upsert`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -317,16 +365,17 @@ export async function createFirmContact(firmData: FirmContactData): Promise<stri
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Failed to create firm contact:', errorText);
-      throw new Error(`Failed to create firm contact: ${response.status}`);
+      console.error('Failed to upsert firm contact:', errorText);
+      throw new Error(`Failed to upsert firm contact: ${response.status} — ${errorText}`);
     }
 
     const data = await response.json();
-    console.log('Firm contact created:', data.contact?.id);
-    
-    return data.contact?.id || data.id;
+    const contactId = data.contact?.id || data.id;
+    console.log('Firm contact upserted:', contactId);
+
+    return contactId;
   } catch (error) {
-    console.error('Error creating firm contact:', error);
+    console.error('Error upserting firm contact:', error);
     throw error;
   }
 }
@@ -334,17 +383,34 @@ export async function createFirmContact(firmData: FirmContactData): Promise<stri
 // ─── CLIENT CONTACT ─────────────────────────────────────────────────────────
 
 /**
- * Create a Client Contact in GoHighLevel
+ * Create/upsert a Client Contact in GoHighLevel.
  * Tagged with parent firm for easy lookup.
- * 
- * Uses Maria's simplified GHL field keys:
- * - Company info: llc_legal_name, ein, entity_type, service_type, etc.
- * - Company address: company_street_address, company_city, etc.
- * - Formation: formation_date, country_of_formation, state_of_formation, date_authority_filed_ny
- * - Company Applicants 1-3: ca1_*, ca2_*, ca3_*
- * - Beneficial Owners 1-9: bo1_*, bo2_*, ..., bo9_*
- * - Attestation: attestation_signature, attestation_initials, attestation_title, attestation_date
- * - Exemption: exemption_category, exemption_explanation
+ *
+ * Uses exact GHL custom field keys with DOUBLE underscore naming:
+ *
+ * Filing Info (G2r5TJba4JBWhxHQIP78):
+ *   legal_business_name, entity_type, filing_type, service_type, ein,
+ *   date_of_formation__registration, ny_dos_id_number, fictitious_name_dba,
+ *   country_of_formation, state_of_formation, date_authority_filed_in_ny,
+ *   llc_contact_email, company_street_address, company_city, company_state,
+ *   company_country, company_zip_code, beneficial_owners_count, company_applicants_count
+ *
+ * Beneficial Owners (CMngkSX1yJOBZRfWTaiV):
+ *   bo{1-9}__full_name, bo{1-9}__date_of_birth, bo{1-9}__ownership_,
+ *   bo{1-9}__position__title, etc.
+ *
+ * Company Applicants (hN5bDkEhdgVNKcbNlBc2):
+ *   ca{1-3}__full_name, ca{1-3}__date_of_birth, ca{1-3}__title_or_role, etc.
+ *
+ * Consents (gvS4YgeUoww5dqZ7V3Or):
+ *   attestation_signature, attestation_full_name, attestation_title,
+ *   attestation_date, attestation_initials
+ *
+ * Exemption & Attestation (9JmueuzHPqdzNk5Jno4v):
+ *   select_exemption_category, explanation__supporting_facts,
+ *   exemption_attestation__date,
+ *   exemption_attestation__full_name_of_authorized_individual_who_signed,
+ *   exemption_attestation__position__title
  */
 export async function createClientContact(clientData: ClientContactData): Promise<string> {
   const config = await fetchGoHighLevelApiKeys();
@@ -354,140 +420,100 @@ export async function createClientContact(clientData: ClientContactData): Promis
   }
 
   try {
-    console.log('Creating client contact:', clientData.llcName);
-    
+    console.log('Creating/upserting client contact:', clientData.llcName);
+
     // ── Build tags ──
     const tags = [
       'client',
       'nylta-llc',
       `firm-${clientData.parentFirmConfirmation}`,
-      clientData.serviceType,       // 'monitoring' or 'filing'
-      clientData.entityType,        // 'domestic' or 'foreign'
-      clientData.filingType,        // 'disclosure' or 'exemption'
-      ...(clientData.batchId ? [`batch-${clientData.batchId}`] : [])
+      'nylta_submission_complete'
     ];
-    
-    // ── Build comprehensive custom fields (Maria's simplified keys) ──
+
+    // ── Filing Information (Folder: G2r5TJba4JBWhxHQIP78) ──
     const customFields: Array<{ key: string; field_value: string }> = [
-      // Account Details & Parent Firm Linkage
-      { key: 'account_type', field_value: 'client' },
-      { key: 'parent_firm_id', field_value: clientData.parentFirmId || '' },
-      { key: 'parent_firm_name', field_value: clientData.parentFirmName || '' },
-      { key: 'parent_firm_confirmation', field_value: clientData.parentFirmConfirmation || '' },
-      { key: 'batch_id', field_value: clientData.batchId || clientData.parentFirmConfirmation || '' },
-      
-      // LLC / Client Information
-      { key: 'llc_legal_name', field_value: clientData.llcName },
-      { key: 'fictitious_name_dba', field_value: clientData.fictitiousName || '' },
-      { key: 'nydos_id', field_value: clientData.nydosId },
-      { key: 'ein', field_value: clientData.ein },
-      { key: 'entity_type', field_value: clientData.entityType },
-      { key: 'service_type', field_value: clientData.serviceType },
-      { key: 'formation_date', field_value: clientData.formationDate },
-      
+      // Account Details (gPFrau7XTO0ED3AEDPdV)
+      { key: 'account_type',                    field_value: 'client' },
+      { key: 'parent_firm_id',                  field_value: clientData.parentFirmId || '' },
+      { key: 'parent_firm_name',                field_value: clientData.parentFirmName || '' },
+      { key: 'parent_firm_confirmation',         field_value: clientData.parentFirmConfirmation || '' },
+
+      // Order / Submission Tracking (ejqBRb6QeM8IQg7pTPAV)
+      { key: 'batch_id',                        field_value: clientData.batchId || clientData.parentFirmConfirmation || '' },
+      { key: 'order_number',                    field_value: clientData.orderNumber || '' },
+      { key: 'submission_number',               field_value: clientData.submissionNumber || '' },
+
+      // Filing Information (G2r5TJba4JBWhxHQIP78)
+      { key: 'legal_business_name',             field_value: clientData.llcName },
+      { key: 'fictitious_name_dba',             field_value: clientData.fictitiousName || '' },
+      { key: 'ny_dos_id_number',                field_value: clientData.nydosId },
+      { key: 'ein',                             field_value: clientData.ein },
+      { key: 'entity_type',                     field_value: clientData.entityType },
+      { key: 'service_type',                    field_value: clientData.serviceType },
+      { key: 'filing_type',                     field_value: clientData.filingType },
+      { key: 'date_of_formation__registration', field_value: clientData.formationDate },
+      { key: 'country_of_formation',            field_value: clientData.countryOfFormation },
+      { key: 'state_of_formation',              field_value: clientData.stateOfFormation || '' },
+      { key: 'llc_contact_email',               field_value: clientData.contactEmail },
+
       // Company Address
-      { key: 'company_street_address', field_value: clientData.streetAddress || '' },
-      { key: 'company_city', field_value: clientData.city || '' },
-      { key: 'company_state', field_value: clientData.addressState || '' },
-      { key: 'company_zip_code', field_value: clientData.addressZipCode || '' },
-      { key: 'company_country', field_value: clientData.addressCountry || clientData.countryOfFormation },
-      
-      // Formation Details
-      { key: 'country_of_formation', field_value: clientData.countryOfFormation },
-      { key: 'state_of_formation', field_value: clientData.stateOfFormation || '' },
-      
-      // Contact & Counts
-      { key: 'llc_contact_email', field_value: clientData.contactEmail },
-      { key: 'filing_type', field_value: clientData.filingType },
-      { key: 'beneficial_owners__count', field_value: (clientData.beneficialOwners?.length || 0).toString() },
-      { key: 'company_applicants__count', field_value: (clientData.companyApplicants?.length || 0).toString() }
+      { key: 'company_street_address',          field_value: clientData.streetAddress || '' },
+      { key: 'company_city',                    field_value: clientData.city || '' },
+      { key: 'company_state',                   field_value: clientData.addressState || '' },
+      { key: 'company_country',                 field_value: clientData.addressCountry || clientData.countryOfFormation },
+      { key: 'company_zip_code',                field_value: clientData.addressZipCode || '' },
+
+      // Counts
+      { key: 'beneficial_owners_count',         field_value: (clientData.beneficialOwners?.length || 0).toString() },
+      { key: 'company_applicants_count',        field_value: (clientData.companyApplicants?.length || 0).toString() }
     ];
-    
-    // ── Foreign entity specific fields ──
-    if (clientData.entityType === 'foreign' && clientData.dateAuthorityFiledNY) {
+
+    // ── Foreign entity: date_authority_filed_in_ny (required) ──
+    if (clientData.entityType === 'foreign') {
       customFields.push({
-        key: 'date_authority_filed_ny',
-        field_value: clientData.dateAuthorityFiledNY
+        key: 'date_authority_filed_in_ny',
+        field_value: clientData.dateAuthorityFiledNY || ''
       });
     }
-    
-    // ── Exemption fields ──
+
+    // ── Exemption fields (Folder: 9JmueuzHPqdzNk5Jno4v) ──
     if (clientData.filingType === 'exemption') {
       customFields.push(
-        { key: 'exemption_category', field_value: clientData.exemptionCategory || '' },
-        { key: 'exemption_explanation', field_value: clientData.exemptionExplanation || '' }
+        { key: 'select_exemption_category',   field_value: clientData.exemptionCategory || '' },
+        { key: 'explanation__supporting_facts', field_value: clientData.exemptionExplanation || '' },
+        { key: 'exemption_attestation__date',   field_value: clientData.exemptionAttestationDate || clientData.attestationDate || '' },
+        { key: 'exemption_attestation__full_name_of_authorized_individual_who_signed',
+          field_value: clientData.exemptionAttestationFullName || clientData.attestationFullName || '' },
+        { key: 'exemption_attestation__position__title',
+          field_value: clientData.exemptionAttestationTitle || clientData.attestationTitle || '' }
       );
     }
-    
-    // ── Attestation fields ──
-    if (clientData.attestationSignature || clientData.attestationFullName || clientData.attestationInitials) {
-      customFields.push(
-        { key: 'attestation_signature', field_value: clientData.attestationSignature || '' },
-        { key: 'attestation_initials', field_value: clientData.attestationInitials || '' },
-        { key: 'attestation_title', field_value: clientData.attestationTitle || '' },
-        { key: 'attestation_date', field_value: clientData.attestationDate || '' }
-      );
-    }
-    
-    // ── Company Applicants (up to 3) — uses shared builder function ──
-    if (clientData.companyApplicants && clientData.companyApplicants.length > 0) {
+
+    // ── Consent / Attestation fields (Folder: gvS4YgeUoww5dqZ7V3Or) ──
+    customFields.push(
+      { key: 'attestation_signature', field_value: clientData.attestationSignature || '' },
+      { key: 'attestation_full_name', field_value: clientData.attestationFullName || '' },
+      { key: 'attestation_title',     field_value: clientData.attestationTitle || '' },
+      { key: 'attestation_date',      field_value: clientData.attestationDate || '' },
+      { key: 'attestation_initials',  field_value: clientData.attestationInitials || '' }
+    );
+
+    // ── Company Applicants (up to 3) — HIDDEN if filingType === 'exemption' ──
+    if (clientData.filingType !== 'exemption' &&
+        clientData.companyApplicants && clientData.companyApplicants.length > 0) {
       clientData.companyApplicants.forEach((applicant, index) => {
         if (index >= 3) return; // Max 3 company applicants
         const caFields = buildCompanyApplicantFields(applicant, index + 1);
         customFields.push(...caFields);
       });
     }
-    
-    // ── Beneficial Owners (up to 9) — simplified bo1_* through bo9_* keys ──
+
+    // ── Beneficial Owners (up to 9) ──
     if (clientData.beneficialOwners && clientData.beneficialOwners.length > 0) {
       clientData.beneficialOwners.forEach((owner, index) => {
-        if (index >= 9) return; // GoHighLevel supports up to 9 beneficial owners
-        
-        const prefix = `bo${index + 1}`;
-        
-        // Parse pipe-delimited address into components
-        const addr = parseAddress(
-          owner.address,
-          owner.streetAddress || owner.addressLine1,
-          owner.city,
-          owner.state,
-          owner.zipCode,
-          owner.country
-        );
-        
-        // Resolve ownership percentage from multiple possible field names
-        const ownershipPct = owner.ownershipPercentage?.toString() || owner.ownership?.toString() || '0';
-        
-        // Use owner.position (correct per types.ts), falling back to owner.role (legacy)
-        const positionTitle = owner.position || owner.role || '';
-        
-        customFields.push(
-          // Personal information
-          { key: `${prefix}_full_name`, field_value: owner.fullName || '' },
-          { key: `${prefix}_dob`, field_value: owner.dob || '' },
-          // Parsed address components
-          { key: `${prefix}_street_address`, field_value: addr.street },
-          { key: `${prefix}_city`, field_value: addr.city },
-          { key: `${prefix}_state`, field_value: addr.state },
-          { key: `${prefix}_zip_code`, field_value: addr.zipCode },
-          { key: `${prefix}_country`, field_value: addr.country },
-          // Address type (Residential/Business)
-          { key: `${prefix}_address_type`, field_value: owner.addressType || '' },
-          // Identity verification
-          { key: `${prefix}_id_type`, field_value: owner.idType || '' },
-          { key: `${prefix}_id_number`, field_value: owner.idNumber || '' },
-          { key: `${prefix}_id_expiration_date`, field_value: owner.idExpirationDate || '' },
-          { key: `${prefix}_issuing_country`, field_value: owner.issuingCountry || '' },
-          { key: `${prefix}_issuing_state`, field_value: owner.issuingState || '' },
-          // Ownership & role
-          { key: `${prefix}_ownership_percentage`, field_value: ownershipPct },
-          { key: `${prefix}_position_or_title`, field_value: positionTitle }
-        );
-        
-        // NOTE: ssn, isControlPerson, isOrganizer are collected in the wizard
-        // but are NOT sent to GoHighLevel custom fields for security/privacy reasons.
-        // SSN should never be stored in CRM. isControlPerson and isOrganizer are
-        // captured in the submission note for reference.
+        if (index >= 9) return; // Max 9 beneficial owners
+        const boFields = buildBeneficialOwnerFields(owner, index + 1);
+        customFields.push(...boFields);
       });
     }
 
@@ -506,7 +532,8 @@ export async function createClientContact(clientData: ClientContactData): Promis
       customFields
     };
 
-    const response = await fetch(`${HIGHLEVEL_BASE_URL}/contacts/`, {
+    // Use /contacts/upsert — NOT /contacts/
+    const response = await fetch(`${HIGHLEVEL_BASE_URL}/contacts/upsert`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -518,16 +545,52 @@ export async function createClientContact(clientData: ClientContactData): Promis
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Failed to create client contact:', errorText);
-      throw new Error(`Failed to create client contact: ${response.status}`);
+      console.error('Failed to upsert client contact:', errorText);
+      throw new Error(`Failed to upsert client contact: ${response.status} — ${errorText}`);
     }
 
     const data = await response.json();
-    console.log('Client contact created:', data.contact?.id);
-    
-    return data.contact?.id || data.id;
+    const contactId = data.contact?.id || data.id;
+    console.log('Client contact upserted:', contactId);
+
+    // Log to submission logs (fire-and-forget)
+    logSubmission(null, {
+      action: 'CLIENT_CONTACT_UPSERT',
+      clientName: clientData.llcName,
+      firmName: clientData.parentFirmName || '',
+      contactId,
+      batchId: clientData.batchId || '',
+      orderNumber: clientData.orderNumber || '',
+      submissionNumber: clientData.submissionNumber || '',
+      success: true,
+      fieldCount: customFields.length,
+      tags,
+      metadata: {
+        filingType: clientData.filingType,
+        serviceType: clientData.serviceType,
+        entityType: clientData.entityType,
+        boCount: clientData.beneficialOwners?.length || 0,
+        caCount: clientData.companyApplicants?.length || 0
+      }
+    });
+
+    return contactId;
   } catch (error) {
-    console.error('Error creating client contact:', error);
+    console.error('Error upserting client contact:', error);
+
+    // Log failure to submission logs
+    logSubmission(null, {
+      action: 'CLIENT_CONTACT_UPSERT',
+      clientName: clientData.llcName,
+      firmName: clientData.parentFirmName || '',
+      success: false,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      metadata: {
+        filingType: clientData.filingType,
+        serviceType: clientData.serviceType
+      }
+    });
+
     throw error;
   }
 }
@@ -535,14 +598,15 @@ export async function createClientContact(clientData: ClientContactData): Promis
 // ─── ORDER CONFIRMATION ─────────────────────────────────────────────────────
 
 /**
- * Send Order Confirmation to Firm
+ * Send Order Confirmation to Firm.
  * Updates firm contact with order details, adds submission note,
  * and applies workflow trigger tags.
- * 
- * Uses Maria's simplified order tracking keys:
- * order_number, submission_date, payment_date, amount_paid, client_count,
- * batch_id, bulk_service_type, submission_status, payment_status
- * Plus ACH billing info (masked account/routing numbers)
+ *
+ * GHL Folder: NYLTA | Bulk Filing | Order / Submission Tracking
+ * Folder ID: ejqBRb6QeM8IQg7pTPAV
+ *
+ * GHL Folder: NYLTA | Bulk Filing | Account Details (ACH fields)
+ * Folder ID: gPFrau7XTO0ED3AEDPdV
  */
 export async function sendOrderConfirmation(orderData: OrderConfirmationData): Promise<void> {
   const config = await fetchGoHighLevelApiKeys();
@@ -553,33 +617,41 @@ export async function sendOrderConfirmation(orderData: OrderConfirmationData): P
 
   try {
     console.log('Sending order confirmation to firm:', orderData.firmName);
-    
-    // Build custom fields for order tracking (Maria's simplified keys)
+
+    // Order / Submission Tracking fields (ejqBRb6QeM8IQg7pTPAV)
     const customFields: Array<{ key: string; field_value: string }> = [
-      { key: 'order_number', field_value: orderData.orderNumber },
-      { key: 'submission_date', field_value: orderData.submissionDate },
-      { key: 'payment_date', field_value: orderData.paymentDate || orderData.submissionDate },
-      { key: 'amount_paid', field_value: orderData.amountPaid.toString() },
-      { key: 'client_count', field_value: orderData.clientCount.toString() },
-      { key: 'batch_id', field_value: orderData.batchId || orderData.confirmationNumber },
-      { key: 'bulk_service_type', field_value: orderData.serviceType || 'filing' },
-      { key: 'submission_status', field_value: 'Pending' },
-      { key: 'payment_status', field_value: 'Pending' },
-      { key: 'bulk_ip_address', field_value: '' } // Set by caller if available
+      { key: 'batch_id',                   field_value: orderData.batchId || orderData.confirmationNumber },
+      { key: 'order_number',               field_value: orderData.orderNumber },
+      { key: 'submission_number',          field_value: orderData.submissionNumber || orderData.orderNumber },
+      { key: 'submission_date',            field_value: orderData.submissionDate },
+      { key: 'submission_status',          field_value: 'Pending' },
+      { key: 'payment_status',             field_value: 'Pending' },
+      { key: 'payment_amount',             field_value: (orderData.paymentAmount || orderData.amountPaid).toString() },
+      { key: 'payment_date',               field_value: orderData.paymentDate || orderData.submissionDate },
+      { key: 'last_order_number',          field_value: orderData.orderNumber },
+      { key: 'last_order_date',            field_value: orderData.submissionDate },
+      { key: 'last_order_amount',          field_value: orderData.amountPaid.toString() },
+      { key: 'last_order_client_count',    field_value: orderData.clientCount.toString() },
+      { key: 'bulk_service_type',          field_value: orderData.serviceType || 'filing' },
+      { key: 'bulk_ip_address',            field_value: '' }, // Set by caller if available
+      { key: 'client_count',               field_value: orderData.clientCount.toString() },
+      { key: 'amount_paid',                field_value: orderData.amountPaid.toString() },
+      { key: 'bulk_filing_contact_email',  field_value: orderData.contactEmail || '' },
+      { key: 'total_orders',               field_value: '1' }  // Incremented server-side if needed
     ];
-    
-    // ── ACH billing info (NEVER store full account/routing numbers) ──
+
+    // ACH billing info — Account Details folder (gPFrau7XTO0ED3AEDPdV)
+    // NEVER store full account/routing numbers
     if (orderData.achAccountType) {
       customFields.push(
-        { key: 'ach_account_type', field_value: orderData.achAccountType },
-        // Only last 4 digits stored — full numbers NEVER touch GHL
-        { key: 'ach_routing_number', field_value: orderData.achRoutingLast4 ? `****${orderData.achRoutingLast4}` : '' },
-        { key: 'ach_account_number', field_value: orderData.achAccountLast4 ? `****${orderData.achAccountLast4}` : '' },
-        { key: 'ach_billing_street_address', field_value: orderData.achBillingStreet || '' },
-        { key: 'ach_billing_city', field_value: orderData.achBillingCity || '' },
-        { key: 'ach_billing_state', field_value: orderData.achBillingState || '' },
-        { key: 'ach_billing_zip_code', field_value: orderData.achBillingZip || '' },
-        { key: 'ach_billing_country', field_value: orderData.achBillingCountry || 'United States' }
+        { key: 'ach_account_type',          field_value: orderData.achAccountType },
+        { key: 'ach_routing_number_last_4', field_value: orderData.achRoutingLast4 ? `****${orderData.achRoutingLast4}` : '' },
+        { key: 'ach_account_number_last_4', field_value: orderData.achAccountLast4 ? `****${orderData.achAccountLast4}` : '' },
+        { key: 'ach_billing_street',        field_value: orderData.achBillingStreet || '' },
+        { key: 'ach_billing_city',          field_value: orderData.achBillingCity || '' },
+        { key: 'ach_billing_state',         field_value: orderData.achBillingState || '' },
+        { key: 'ach_billing_zip',           field_value: orderData.achBillingZip || '' },
+        { key: 'ach_billing_country',       field_value: orderData.achBillingCountry || 'United States' }
       );
     }
 
@@ -597,14 +669,14 @@ export async function sendOrderConfirmation(orderData: OrderConfirmationData): P
       `Filings: ${orderData.clientCount}`,
       filingTypeTag
     ];
-    
+
     // Add priority tag for high-value orders
     if (orderData.amountPaid > 5000) {
       submissionTags.push('Priority: High Value');
     }
 
     // Update firm contact with order info AND workflow trigger tags
-    await fetch(`${HIGHLEVEL_BASE_URL}/contacts/${orderData.firmContactId}`, {
+    const updateResponse = await fetch(`${HIGHLEVEL_BASE_URL}/contacts/${orderData.firmContactId}`, {
       method: 'PUT',
       headers: {
         'Authorization': `Bearer ${config.apiKey}`,
@@ -616,6 +688,11 @@ export async function sendOrderConfirmation(orderData: OrderConfirmationData): P
         customFields
       })
     });
+
+    if (!updateResponse.ok) {
+      const errorText = await updateResponse.text();
+      console.error('Failed to update firm contact with order info:', errorText);
+    }
 
     // Add detailed note to contact with order details
     const noteContent = `
@@ -631,7 +708,7 @@ Order Details:
 - Service Type: ${orderData.serviceType || 'filing'}
 
 Clients Filed:
-${orderData.clients.map((c, i) => 
+${orderData.clients.map((c, i) =>
   `${i + 1}. ${c.llcName} - ${c.serviceType === 'monitoring' ? 'Compliance Monitoring' : 'Bulk Filing'} ($${c.fee})`
 ).join('\n')}
 
@@ -653,7 +730,26 @@ This order has been successfully submitted and is being processed.
     });
 
     console.log('Order confirmation sent successfully with workflow trigger tags');
-    
+
+    // Log order confirmation to submission logs (fire-and-forget)
+    logSubmission(null, {
+      action: 'ORDER_CONFIRMATION',
+      firmName: orderData.firmName,
+      contactId: orderData.firmContactId,
+      batchId: orderData.batchId || orderData.confirmationNumber,
+      orderNumber: orderData.orderNumber,
+      submissionNumber: orderData.submissionNumber || orderData.orderNumber,
+      success: true,
+      fieldCount: customFields.length,
+      tags: submissionTags,
+      metadata: {
+        clientCount: orderData.clientCount,
+        amountPaid: orderData.amountPaid,
+        serviceType: orderData.serviceType,
+        contactEmail: orderData.contactEmail
+      }
+    });
+
   } catch (error) {
     console.error('Error sending order confirmation:', error);
     throw error;
@@ -663,8 +759,8 @@ This order has been successfully submitted and is being processed.
 // ─── BULK CLIENT CONTACTS ───────────────────────────────────────────────────
 
 /**
- * Bulk create client contacts for an entire submission
- * Returns array of created contact IDs
+ * Bulk create client contacts for an entire submission.
+ * Returns array of created contact IDs.
  */
 export async function createBulkClientContacts(
   firmContactId: string,
@@ -673,9 +769,9 @@ export async function createBulkClientContacts(
   clients: ClientContactData[]
 ): Promise<string[]> {
   const contactIds: string[] = [];
-  
+
   console.log(`Creating ${clients.length} client contacts for firm:`, firmName);
-  
+
   for (const client of clients) {
     try {
       const clientWithFirmInfo = {
@@ -685,10 +781,10 @@ export async function createBulkClientContacts(
         parentFirmConfirmation: firmConfirmation,
         batchId: client.batchId || firmConfirmation  // Batch ID defaults to the confirmation number
       };
-      
+
       const contactId = await createClientContact(clientWithFirmInfo);
       contactIds.push(contactId);
-      
+
       // Small delay to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 100));
     } catch (error) {
@@ -696,7 +792,7 @@ export async function createBulkClientContacts(
       // Continue with other clients even if one fails
     }
   }
-  
+
   console.log(`Created ${contactIds.length}/${clients.length} client contacts`);
   return contactIds;
 }
@@ -704,63 +800,81 @@ export async function createBulkClientContacts(
 // ─── WIZARD DATA CONVERTER ─────────────────────────────────────────────────
 
 /**
- * Helper function to convert wizard client data to ClientContactData format.
- * Maps all fields from the wizard's Client type to the GoHighLevel contact structure.
- * 
+ * Convert wizard client data to ClientContactData format.
+ * Maps all fields from the wizard's Client type to the GHL contact structure.
+ *
  * Handles:
- * - Company applicant field mapping (up to 3, including phone, email, titleOrRole, idExpirationDate)
- * - Beneficial owner field mapping (including addressType, idExpirationDate, position, isControlPerson, isOrganizer)
- * - Address parsing from pipe-delimited to separate components
- * - Attestation initials mapping
+ * - Company applicant field mapping (up to 3)
+ * - Beneficial owner field mapping (up to 9)
+ * - Legacy pipe-delimited address fallback
+ * - Exemption attestation separate from consent attestation
+ *
+ * DEPRECATED FIELDS REMOVED: ssn, isControlPerson, isOrganizer,
+ * pipe-delimited address (as primary), role (legacy)
  */
-export function convertWizardClientToContactData(client: any): Omit<ClientContactData, 'parentFirmId' | 'parentFirmName' | 'parentFirmConfirmation'> {
-  // Map company applicants with all fields (up to 3)
-  const mappedApplicants = (client.companyApplicants || []).slice(0, 3).map((ca: any) => ({
-    fullName: ca.fullName,
-    dob: ca.dob,
-    address: ca.address,                     // Pipe-delimited (will be parsed in createClientContact)
-    streetAddress: ca.streetAddress,          // Pre-parsed if available
-    city: ca.city,
-    state: ca.state,
-    zipCode: ca.zipCode,
-    country: ca.country,
-    phoneNumber: ca.phoneNumber || '',
-    email: ca.email || '',
-    titleOrRole: ca.titleOrRole || '',
-    idType: ca.idType,
-    idNumber: ca.idNumber,
-    idExpirationDate: ca.idExpirationDate || '',
-    issuingCountry: ca.issuingCountry,
-    issuingState: ca.issuingState,
-    role: ca.role                             // Legacy field, titleOrRole preferred
-  }));
+export function convertWizardClientToContactData(
+  client: any
+): Omit<ClientContactData, 'parentFirmId' | 'parentFirmName' | 'parentFirmConfirmation'> {
 
-  // Map beneficial owners with all fields
-  const mappedOwners = (client.beneficialOwners || []).map((bo: any) => ({
-    fullName: bo.fullName,
-    dob: bo.dob,
-    address: bo.address,                     // Pipe-delimited (will be parsed in createClientContact)
-    addressLine1: bo.addressLine1,
-    addressLine2: bo.addressLine2,
-    addressType: bo.addressType || '',       // Residential/Business
-    streetAddress: bo.streetAddress,          // Pre-parsed if available
-    city: bo.city,
-    state: bo.state,
-    zipCode: bo.zipCode,
-    country: bo.country,
-    ssn: bo.ssn || '',                       // Not sent to GHL for security
-    idType: bo.idType,
-    idNumber: bo.idNumber,
-    idExpirationDate: bo.idExpirationDate || '',
-    issuingCountry: bo.issuingCountry,
-    issuingState: bo.issuingState,
-    ownershipPercentage: bo.ownershipPercentage || bo.ownership,
-    ownership: bo.ownership,
-    position: bo.position || '',             // Correct field per types.ts
-    role: bo.role,                           // Legacy fallback
-    isControlPerson: bo.isControlPerson || false,
-    isOrganizer: bo.isOrganizer || false
-  }));
+  // Map company applicants — clean interface, no legacy fields
+  const mappedApplicants = (client.companyApplicants || []).slice(0, 3).map((ca: any) => {
+    // If only legacy pipe-delimited address exists, parse it
+    const addr = parseAddress(
+      ca.address,
+      ca.streetAddress,
+      ca.city,
+      ca.state,
+      ca.zipCode,
+      ca.country
+    );
+    return {
+      fullName: ca.fullName || '',
+      dob: ca.dob || '',
+      streetAddress: addr.street,
+      city: addr.city,
+      state: addr.state,
+      zipCode: addr.zipCode,
+      country: addr.country,
+      phoneNumber: ca.phoneNumber || ca.phone || '',
+      email: ca.email || '',
+      titleOrRole: ca.titleOrRole || ca.role || '',
+      idType: ca.idType || '',
+      idNumber: ca.idNumber || '',
+      idExpirationDate: ca.idExpirationDate || '',
+      issuingCountry: ca.issuingCountry || '',
+      issuingState: ca.issuingState || ''
+    };
+  });
+
+  // Map beneficial owners — clean interface, no deprecated fields
+  const mappedOwners = (client.beneficialOwners || []).slice(0, 9).map((bo: any) => {
+    // If only legacy pipe-delimited address exists, parse it
+    const addr = parseAddress(
+      bo.address,
+      bo.streetAddress || bo.addressLine1,
+      bo.city,
+      bo.state,
+      bo.zipCode,
+      bo.country
+    );
+    return {
+      fullName: bo.fullName || '',
+      dob: bo.dob || '',
+      streetAddress: addr.street,
+      city: addr.city,
+      state: addr.state,
+      zipCode: addr.zipCode,
+      country: addr.country,
+      addressType: bo.addressType || '',
+      idType: bo.idType || '',
+      idNumber: bo.idNumber || '',
+      idExpirationDate: bo.idExpirationDate || '',
+      issuingCountry: bo.issuingCountry || '',
+      issuingState: bo.issuingState || '',
+      ownershipPercentage: bo.ownershipPercentage || bo.ownership || '0',
+      position: bo.position || bo.role || ''
+    };
+  });
 
   return {
     llcName: client.llcName,
@@ -781,12 +895,15 @@ export function convertWizardClientToContactData(client: any): Omit<ClientContac
     addressState: client.companyState || client.addressState,
     addressCountry: client.companyCountry || client.addressCountry,
     addressZipCode: client.companyZipCode || client.addressZipCode,
-    // Exemption
+    // Exemption (mapped to correct GHL keys in createClientContact)
     exemptionCategory: client.exemptionCategory,
     exemptionExplanation: client.exemptionExplanation || client.exemptionReason,
-    // Attestation (including initials)
+    exemptionAttestationFullName: client.exemptionAttestationFullName,
+    exemptionAttestationTitle: client.exemptionAttestationTitle,
+    exemptionAttestationDate: client.exemptionAttestationDate,
+    // Consent attestation
     attestationSignature: client.attestationSignature,
-    attestationFullName: client.attestationName,
+    attestationFullName: client.attestationName || client.attestationFullName,
     attestationInitials: client.attestationInitials || client.initials || '',
     attestationTitle: client.attestationTitle,
     attestationDate: client.attestationDate,
@@ -795,5 +912,3 @@ export function convertWizardClientToContactData(client: any): Omit<ClientContac
     beneficialOwners: mappedOwners
   };
 }
-
-export type { FirmContactData, ClientContactData, OrderConfirmationData };

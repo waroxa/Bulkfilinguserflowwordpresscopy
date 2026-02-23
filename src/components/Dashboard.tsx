@@ -12,6 +12,8 @@ import { useAuth } from "../contexts/AuthContext";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "./ui/alert";
 import { projectId, publicAnonKey } from '../utils/supabase/info';
+import BulkFilingWizard from "./wizard/BulkFilingWizard";
+import { SERVER_URL } from "../utils/supabase/client";
 
 // Define props interface
 interface DashboardProps {
@@ -42,6 +44,62 @@ interface PricingTier {
 
 // Define the base URL for the WordPress REST API
 const WP_API_BASE = '/wp-json/nylta/v1';
+
+/** Loader that fetches firm data then renders BulkFilingWizard */
+function BulkFilingWizardLoader({ firmName, session, onBack, onComplete }: {
+  firmName: string;
+  session: any;
+  onBack: () => void;
+  onComplete: () => void;
+}) {
+  const [firmData, setFirmData] = useState<{ firmContactId: string; firmConfirmation: string } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        if (!session?.access_token) {
+          setFirmData({ firmContactId: '', firmConfirmation: `CONF-${Date.now().toString(36).toUpperCase()}` });
+          return;
+        }
+        const res = await fetch(`${SERVER_URL}/account`, {
+          headers: { 'Authorization': `Bearer ${session.access_token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setFirmData({
+            firmContactId: data.account?.ghlFirmContactId || data.account?.highLevelContactId || '',
+            firmConfirmation: data.account?.confirmationNumber || data.account?.confirmation || `CONF-${Date.now().toString(36).toUpperCase()}`,
+          });
+        } else {
+          setFirmData({ firmContactId: '', firmConfirmation: `CONF-${Date.now().toString(36).toUpperCase()}` });
+        }
+      } catch {
+        setFirmData({ firmContactId: '', firmConfirmation: `CONF-${Date.now().toString(36).toUpperCase()}` });
+      }
+    })();
+  }, [session]);
+
+  if (!firmData) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-[#00274E] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-gray-500">Loading firm data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <BulkFilingWizard
+      firmContactId={firmData.firmContactId}
+      firmName={firmName}
+      firmConfirmation={firmData.firmConfirmation}
+      onBack={onBack}
+      onComplete={onComplete}
+    />
+  );
+}
 
 export default function Dashboard({ onStartBulkFiling, onViewSubmissions, onAdminAccess, onLogout, onCompleteFirmProfile, contactName = "John Anderson", firmName = "Anderson & Associates CPA", onEditProfile, firmProfileComplete, isLoadingProfile }: DashboardProps) {
   const [currentView, setCurrentView] = useState<'landing' | 'bulk-filing' | 'submissions' | 'my-submissions' | 'profile' | 'firm-profile' | 'admin'>('landing');
@@ -202,13 +260,23 @@ export default function Dashboard({ onStartBulkFiling, onViewSubmissions, onAdmi
   
   if (currentView === 'profile') {
     return <MemberProfile onBack={() => setCurrentView('landing')} onStartNewFiling={() => {
-      setCurrentView('landing');
-      if (onStartBulkFiling) onStartBulkFiling();
+      setCurrentView('bulk-filing');
     }} />;
   }
 
   if (currentView === 'admin') {
     return <AdminDashboard onBack={() => setCurrentView('landing')} />;
+  }
+
+  if (currentView === 'bulk-filing') {
+    return (
+      <BulkFilingWizardLoader
+        firmName={firmName}
+        session={session}
+        onBack={() => setCurrentView('landing')}
+        onComplete={() => setCurrentView('landing')}
+      />
+    );
   }
 
   if (currentView === 'my-submissions') {
@@ -273,11 +341,11 @@ export default function Dashboard({ onStartBulkFiling, onViewSubmissions, onAdmi
             
             {/* Navigation Buttons - Responsive */}
             <div className="flex flex-wrap items-center gap-2">
-              {/* Yellow Start Bulk Filing Button */}
+              {/* Yellow Start Bulk Filing Button — uses new 6-step wizard */}
               <Button
                 onClick={() => {
                   if (firmProfileComplete) {
-                    if (onStartBulkFiling) onStartBulkFiling();
+                    setCurrentView('bulk-filing');
                   } else {
                     toast.error("Please complete your firm profile before starting bulk filing");
                     setCurrentView('firm-profile');
@@ -1021,7 +1089,7 @@ export default function Dashboard({ onStartBulkFiling, onViewSubmissions, onAdmi
                 Join hundreds of CPAs, attorneys, and compliance professionals who trust NYLTA.com for bulk filing solutions.
               </p>
               <Button 
-                onClick={onStartBulkFiling || (() => setCurrentView('bulk-filing'))}
+                onClick={() => setCurrentView('bulk-filing')}
                 size="lg"
                 className="bg-yellow-400 hover:bg-yellow-500 text-[#00274E] rounded-none"
               >

@@ -1,13 +1,14 @@
 import { useState } from "react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
-import { ArrowLeft, Wrench, FileSpreadsheet, CheckCircle2, XCircle, AlertTriangle, Database, Code, ClipboardCheck, Plus, Shield, UserCog, Settings } from "lucide-react";
+import { ArrowLeft, Wrench, FileSpreadsheet, CheckCircle2, XCircle, AlertTriangle, Database, Code, ClipboardCheck, Plus, Shield, UserCog, Settings, FileText } from "lucide-react";
 import { ImageWithFallback } from "./figma/ImageWithFallback";
 import HighLevelCustomFieldsViewer from "./HighLevelCustomFieldsViewer";
 import AdminCurlTestTool from "./AdminCurlTestTool";
 import AdminTestEnvironment from "./AdminTestEnvironment";
 import GoHighLevelFieldCreator from "./GoHighLevelFieldCreator";
 import AuditLogViewer from "./AuditLogViewer";
+import SubmissionLogViewer from "./SubmissionLogViewer";
 import AccountDebugTool from "./AccountDebugTool";
 import SimpleDataViewer from "./SimpleDataViewer";
 import CSVTemplateGenerator from "./CSVTemplateGenerator";
@@ -236,6 +237,14 @@ export default function AdminTools({ onBack }: AdminToolsProps) {
       description: 'View system audit logs and API activity',
       icon: Shield,
       color: 'bg-indigo-600',
+      category: 'Security'
+    },
+    {
+      id: 'submission-logs',
+      name: 'Submission Logs',
+      description: 'View GHL submission logs — every client contact upsert and order confirmation',
+      icon: FileText,
+      color: 'bg-emerald-600',
       category: 'Security'
     },
     {
@@ -581,6 +590,24 @@ export default function AdminTools({ onBack }: AdminToolsProps) {
             </Button>
 
             <AuditLogViewer />
+          </div>
+        )}
+
+        {/* Submission Logs Tool */}
+        {activeTool === 'submission-logs' && (
+          <div>
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setActiveTool(null);
+              }}
+              className="mb-6 flex items-center gap-2"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Tools
+            </Button>
+
+            <SubmissionLogViewer />
           </div>
         )}
 

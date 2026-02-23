@@ -19,24 +19,6 @@ app.use('*', cors({
 // Enable request logging
 app.use('*', logger(console.log));
 
-// ── Path rewrite middleware ──────────────────────────────────────────────
-// The deployed Supabase Edge Function name is "make-server-339e423c",
-// but every route below was originally defined with "make-server-2c01e603".
-// This middleware transparently rewrites incoming paths so all existing
-// route definitions keep working without any changes.
-const NEW_PREFIX = '/make-server-339e423c';
-const OLD_PREFIX = '/make-server-2c01e603';
-
-app.use('*', async (c, next) => {
-  const url = new URL(c.req.url);
-  if (url.pathname.startsWith(NEW_PREFIX)) {
-    url.pathname = OLD_PREFIX + url.pathname.slice(NEW_PREFIX.length);
-    const rewritten = new Request(url.toString(), c.req.raw);
-    return app.fetch(rewritten);
-  }
-  return next();
-});
-
 // Initialize Supabase client for auth
 const supabase = createClient(
   Deno.env.get('SUPABASE_URL') ?? '',
@@ -228,12 +210,12 @@ NYLTA.com™
 }
 
 // Health check endpoint
-app.get("/make-server-2c01e603/health", (c) => {
+app.get("/make-server-339e423c/health", (c) => {
   return c.json({ status: "ok" });
 });
 
 // Database audit health check - TEST ENDPOINT
-app.get("/make-server-2c01e603/admin/database-audit-test", (c) => {
+app.get("/make-server-339e423c/admin/database-audit-test", (c) => {
   return c.json({ 
     status: "ok", 
     message: "Database audit endpoint is reachable",
@@ -249,7 +231,7 @@ app.get("/make-server-2c01e603/admin/database-audit-test", (c) => {
  * Sign up a new user account
  * Creates both Supabase auth user and stores firm information in KV store
  */
-app.post("/make-server-2c01e603/signup", async (c) => {
+app.post("/make-server-339e423c/signup", async (c) => {
   try {
     const body = await c.req.json();
     const { 
@@ -355,7 +337,7 @@ app.post("/make-server-2c01e603/signup", async (c) => {
  * Sign in an existing user
  * This is handled by Supabase client-side, but we provide this endpoint for reference
  */
-app.post("/make-server-2c01e603/signin", async (c) => {
+app.post("/make-server-339e423c/signin", async (c) => {
   try {
     const body = await c.req.json();
     const { email, password } = body;
@@ -392,7 +374,7 @@ app.post("/make-server-2c01e603/signin", async (c) => {
  * Get user account information
  * Requires authentication
  */
-app.get("/make-server-2c01e603/account", async (c) => {
+app.get("/make-server-339e423c/account", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -426,7 +408,7 @@ app.get("/make-server-2c01e603/account", async (c) => {
  * Update user account information (for first-time wizard and profile updates)
  * Requires authentication
  */
-app.put("/make-server-2c01e603/account", async (c) => {
+app.put("/make-server-339e423c/account", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -474,7 +456,7 @@ app.put("/make-server-2c01e603/account", async (c) => {
  * Get all pending accounts (Admin only)
  * Requires admin authentication
  */
-app.get("/make-server-2c01e603/admin/accounts/pending", async (c) => {
+app.get("/make-server-339e423c/admin/accounts/pending", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -520,7 +502,7 @@ app.get("/make-server-2c01e603/admin/accounts/pending", async (c) => {
  * Delete account request (Admin only)
  * Requires admin authentication
  */
-app.delete("/make-server-2c01e603/admin/accounts/:userId", async (c) => {
+app.delete("/make-server-339e423c/admin/accounts/:userId", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -577,7 +559,7 @@ app.delete("/make-server-2c01e603/admin/accounts/:userId", async (c) => {
  * Freeze an account (Admin only)
  * Requires admin authentication
  */
-app.post("/make-server-2c01e603/admin/accounts/:userId/freeze", async (c) => {
+app.post("/make-server-339e423c/admin/accounts/:userId/freeze", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -628,7 +610,7 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/freeze", async (c) => {
  * Unfreeze an account (Admin only)
  * Requires admin authentication
  */
-app.post("/make-server-2c01e603/admin/accounts/:userId/unfreeze", async (c) => {
+app.post("/make-server-339e423c/admin/accounts/:userId/unfreeze", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -679,7 +661,7 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/unfreeze", async (c) => {
  * Approve an account (Admin only)
  * Requires admin authentication
  */
-app.post("/make-server-2c01e603/admin/accounts/:userId/approve", async (c) => {
+app.post("/make-server-339e423c/admin/accounts/:userId/approve", async (c) => {
   try {
     console.log('=== APPROVE ACCOUNT REQUEST ===');
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
@@ -812,7 +794,7 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/approve", async (c) => {
         console.log('📤 Creating GHL firm contact for:', targetAccount.firmName);
         console.log('📤 Location ID:', HIGHLEVEL_LOCATION_ID);
 
-        const ghlResponse = await fetch(`${HIGHLEVEL_API_BASE}/contacts/`, {
+        const ghlResponse = await fetch(`${HIGHLEVEL_API_BASE}/contacts/upsert`, {
           method: 'POST',
           headers: {
             'Accept': 'application/json',
@@ -932,7 +914,7 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/approve", async (c) => {
  *   -H "Authorization: Bearer {key}"
  *   -H "Version: 2021-07-28"
  */
-app.get("/make-server-2c01e603/admin/ghl/test-connection", async (c) => {
+app.get("/make-server-339e423c/admin/ghl/test-connection", async (c) => {
   try {
     console.log('=== TEST GHL CONNECTION ===');
 
@@ -1053,7 +1035,7 @@ app.get("/make-server-2c01e603/admin/ghl/test-connection", async (c) => {
 /**
  * Create GHL firm contact — mirrors the exact working curl format
  */
-app.post("/make-server-2c01e603/admin/accounts/:userId/create-ghl-contact", async (c) => {
+app.post("/make-server-339e423c/admin/accounts/:userId/create-ghl-contact", async (c) => {
   try {
     console.log('=== CREATE GHL FIRM CONTACT ===');
 
@@ -1105,7 +1087,7 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/create-ghl-contact", asyn
 
     console.log('GHL payload:', JSON.stringify(payload));
 
-    const ghlRes = await fetch('https://services.leadconnectorhq.com/contacts/', {
+    const ghlRes = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
       method: 'POST',
       headers: {
         'Accept': 'application/json',
@@ -1154,7 +1136,7 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/create-ghl-contact", asyn
  * Reject an account (Admin only)
  * Requires admin authentication
  */
-app.post("/make-server-2c01e603/admin/accounts/:userId/reject", async (c) => {
+app.post("/make-server-339e423c/admin/accounts/:userId/reject", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -1213,7 +1195,7 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/reject", async (c) => {
  * Reset password for an account (Admin only)
  * Requires admin authentication
  */
-app.post("/make-server-2c01e603/admin/accounts/:userId/reset-password", async (c) => {
+app.post("/make-server-339e423c/admin/accounts/:userId/reset-password", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -1300,7 +1282,7 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/reset-password", async (c
  * Get all accounts (Admin only) - for account management dashboard
  * Requires admin authentication
  */
-app.get("/make-server-2c01e603/admin/accounts", async (c) => {
+app.get("/make-server-339e423c/admin/accounts", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -1345,7 +1327,7 @@ app.get("/make-server-2c01e603/admin/accounts", async (c) => {
  * Change account status (Admin only)
  * Requires admin authentication
  */
-app.post("/make-server-2c01e603/admin/accounts/:userId/change-status", async (c) => {
+app.post("/make-server-339e423c/admin/accounts/:userId/change-status", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -1402,7 +1384,7 @@ app.post("/make-server-2c01e603/admin/accounts/:userId/change-status", async (c)
  * This endpoint creates the first admin account
  * In production, you would protect this endpoint or remove it after first use
  */
-app.post("/make-server-2c01e603/setup/create-admin", async (c) => {
+app.post("/make-server-339e423c/setup/create-admin", async (c) => {
   try {
     const body = await c.req.json();
     const { email, password, firmName, contactName } = body;
@@ -1474,7 +1456,7 @@ app.post("/make-server-2c01e603/setup/create-admin", async (c) => {
  * Delete account by email (Admin only - for cleanup/testing)
  * Requires admin authentication
  */
-app.delete("/make-server-2c01e603/admin/accounts/by-email/:email", async (c) => {
+app.delete("/make-server-339e423c/admin/accounts/by-email/:email", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -1591,7 +1573,7 @@ app.delete("/make-server-2c01e603/admin/accounts/by-email/:email", async (c) => 
  * This will be called when users complete the payment step
  * Requires authentication
  */
-app.post("/make-server-2c01e603/bulk-filing/submit", async (c) => {
+app.post("/make-server-339e423c/bulk-filing/submit", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -1659,7 +1641,7 @@ app.post("/make-server-2c01e603/bulk-filing/submit", async (c) => {
 });
 
 // Firm Profile Routes
-app.get('/make-server-2c01e603/firm-profile', async (c) => {
+app.get('/make-server-339e423c/firm-profile', async (c) => {
   try {
     // Try to get user from access token, but fall back to session ID if not authenticated
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
@@ -1725,7 +1707,7 @@ app.get('/make-server-2c01e603/firm-profile', async (c) => {
   }
 });
 
-app.post('/make-server-2c01e603/firm-profile', async (c) => {
+app.post('/make-server-339e423c/firm-profile', async (c) => {
   try {
     // Try to get user from access token, but fall back to session ID if not authenticated
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
@@ -1846,7 +1828,7 @@ app.post('/make-server-2c01e603/firm-profile', async (c) => {
   }
 });
 
-app.post('/make-server-2c01e603/firm-profile/change-request', async (c) => {
+app.post('/make-server-339e423c/firm-profile/change-request', async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     if (!accessToken) {
@@ -1892,7 +1874,7 @@ app.post('/make-server-2c01e603/firm-profile/change-request', async (c) => {
 });
 
 // Admin route to get all firm profiles (for debugging)
-app.get('/make-server-2c01e603/admin/firm-profiles', async (c) => {
+app.get('/make-server-339e423c/admin/firm-profiles', async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     if (!accessToken) {
@@ -1927,7 +1909,7 @@ app.get('/make-server-2c01e603/admin/firm-profiles', async (c) => {
 });
 
 // Admin route to get all change requests
-app.get('/make-server-2c01e603/admin/change-requests', async (c) => {
+app.get('/make-server-339e423c/admin/change-requests', async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     if (!accessToken) {
@@ -1956,7 +1938,7 @@ app.get('/make-server-2c01e603/admin/change-requests', async (c) => {
   }
 });
 
-app.post('/make-server-2c01e603/admin/change-requests/:requestId/approve', async (c) => {
+app.post('/make-server-339e423c/admin/change-requests/:requestId/approve', async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     if (!accessToken) {
@@ -2009,7 +1991,7 @@ app.post('/make-server-2c01e603/admin/change-requests/:requestId/approve', async
   }
 });
 
-app.post('/make-server-2c01e603/admin/change-requests/:requestId/deny', async (c) => {
+app.post('/make-server-339e423c/admin/change-requests/:requestId/deny', async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     if (!accessToken) {
@@ -2059,7 +2041,7 @@ app.post('/make-server-2c01e603/admin/change-requests/:requestId/deny', async (c
  * Save HighLevel audit log (from frontend)
  * No authentication required - this is for logging only
  */
-app.post('/make-server-2c01e603/audit/highlevel', async (c) => {
+app.post('/make-server-339e423c/audit/highlevel', async (c) => {
   try {
     const logData = await c.req.json();
     
@@ -2077,7 +2059,7 @@ app.post('/make-server-2c01e603/audit/highlevel', async (c) => {
  * Get HighLevel audit logs (Admin only - for Ryan)
  * Requires admin authentication
  */
-app.get('/make-server-2c01e603/admin/audit-logs', async (c) => {
+app.get('/make-server-339e423c/admin/audit-logs', async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -2123,7 +2105,7 @@ app.get('/make-server-2c01e603/admin/audit-logs', async (c) => {
 // ========================
 
 // Get survey completion status
-app.get('/make-server-2c01e603/survey', async (c) => {
+app.get('/make-server-339e423c/survey', async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     if (!accessToken) {
@@ -2150,7 +2132,7 @@ app.get('/make-server-2c01e603/survey', async (c) => {
 });
 
 // Submit survey
-app.post('/make-server-2c01e603/survey', async (c) => {
+app.post('/make-server-339e423c/survey', async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     if (!accessToken) {
@@ -2192,7 +2174,7 @@ app.post('/make-server-2c01e603/survey', async (c) => {
 // ========================
 
 // Get user credits
-app.get('/make-server-2c01e603/credits/:userId', async (c) => {
+app.get('/make-server-339e423c/credits/:userId', async (c) => {
   try {
     const userId = c.req.param('userId');
     const creditsData = await kv.get(`credits:${userId}`) as any;
@@ -2210,7 +2192,7 @@ app.get('/make-server-2c01e603/credits/:userId', async (c) => {
 });
 
 // Get credit history
-app.get('/make-server-2c01e603/credits/:userId/history', async (c) => {
+app.get('/make-server-339e423c/credits/:userId/history', async (c) => {
   try {
     const userId = c.req.param('userId');
     const transactions = await kv.getByPrefix(`credit_tx:${userId}:`) || [];
@@ -2228,7 +2210,7 @@ app.get('/make-server-2c01e603/credits/:userId/history', async (c) => {
 });
 
 // Add credits
-app.post('/make-server-2c01e603/credits/:userId/add', async (c) => {
+app.post('/make-server-339e423c/credits/:userId/add', async (c) => {
   try {
     const userId = c.req.param('userId');
     const { amount, type, description, metadata } = await c.req.json();
@@ -2284,7 +2266,7 @@ app.post('/make-server-2c01e603/credits/:userId/add', async (c) => {
 });
 
 // Use credits
-app.post('/make-server-2c01e603/credits/:userId/use', async (c) => {
+app.post('/make-server-339e423c/credits/:userId/use', async (c) => {
   try {
     const userId = c.req.param('userId');
     const { amount, description, submissionId } = await c.req.json();
@@ -2351,7 +2333,7 @@ app.post('/make-server-2c01e603/credits/:userId/use', async (c) => {
 // ========================
 // HIGHLEVEL CUSTOM FIELDS CREATION
 // ========================
-app.post('/make-server-2c01e603/highlevel/create-custom-field', async (c) => {
+app.post('/make-server-339e423c/highlevel/create-custom-field', async (c) => {
   try {
     const { name, dataType, fieldKey, placeholder } = await c.req.json();
     
@@ -2398,7 +2380,7 @@ app.post('/make-server-2c01e603/highlevel/create-custom-field', async (c) => {
 });
 
 // Admin adjust credits
-app.post('/make-server-2c01e603/credits/:userId/admin-adjust', async (c) => {
+app.post('/make-server-339e423c/credits/:userId/admin-adjust', async (c) => {
   try {
     const userId = c.req.param('userId');
     const { amount, reason, adminName } = await c.req.json();
@@ -2460,7 +2442,7 @@ app.post('/make-server-2c01e603/credits/:userId/admin-adjust', async (c) => {
 /**
  * Get user's payment history
  */
-app.get("/make-server-2c01e603/payments/my-payments", async (c) => {
+app.get("/make-server-339e423c/payments/my-payments", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -2491,7 +2473,7 @@ app.get("/make-server-2c01e603/payments/my-payments", async (c) => {
 /**
  * Create a payment record
  */
-app.post("/make-server-2c01e603/payments", async (c) => {
+app.post("/make-server-339e423c/payments", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -2528,7 +2510,7 @@ app.post("/make-server-2c01e603/payments", async (c) => {
 /**
  * Create upgrade payment (monitoring -> filing)
  */
-app.post("/make-server-2c01e603/payments/upgrade", async (c) => {
+app.post("/make-server-339e423c/payments/upgrade", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -2576,7 +2558,7 @@ app.post("/make-server-2c01e603/payments/upgrade", async (c) => {
  * Run comprehensive database audit
  * Admin only
  */
-app.get("/make-server-2c01e603/admin/database-audit", async (c) => {
+app.get("/make-server-339e423c/admin/database-audit", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -2777,7 +2759,7 @@ app.get("/make-server-2c01e603/admin/database-audit", async (c) => {
  * Get detailed data for a specific category
  * Admin only
  */
-app.get("/make-server-2c01e603/admin/database-category", async (c) => {
+app.get("/make-server-339e423c/admin/database-category", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -2825,7 +2807,7 @@ app.get("/make-server-2c01e603/admin/database-category", async (c) => {
  * Export all database data
  * Admin only - CRITICAL for backups
  */
-app.get("/make-server-2c01e603/admin/database-export", async (c) => {
+app.get("/make-server-339e423c/admin/database-export", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -2882,7 +2864,7 @@ app.get("/make-server-2c01e603/admin/database-export", async (c) => {
  * Test database persistence (write/read/verify)
  * Admin only
  */
-app.post("/make-server-2c01e603/admin/database-test", async (c) => {
+app.post("/make-server-339e423c/admin/database-test", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -2924,7 +2906,7 @@ app.post("/make-server-2c01e603/admin/database-test", async (c) => {
  * Read test data
  * Admin only
  */
-app.get("/make-server-2c01e603/admin/database-test", async (c) => {
+app.get("/make-server-339e423c/admin/database-test", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -2970,7 +2952,7 @@ app.get("/make-server-2c01e603/admin/database-test", async (c) => {
  * Delete test data
  * Admin only
  */
-app.delete("/make-server-2c01e603/admin/database-test", async (c) => {
+app.delete("/make-server-339e423c/admin/database-test", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -3011,7 +2993,7 @@ app.delete("/make-server-2c01e603/admin/database-test", async (c) => {
  * Simple data viewer - Get ALL data from KV store
  * Admin only
  */
-app.get("/make-server-2c01e603/admin/simple-data-view", async (c) => {
+app.get("/make-server-339e423c/admin/simple-data-view", async (c) => {
   try {
     const accessToken = c.req.header('Authorization')?.split(' ')[1];
     
@@ -3053,6 +3035,171 @@ app.get("/make-server-2c01e603/admin/simple-data-view", async (c) => {
   } catch (error) {
     console.error('Error loading data:', error);
     return c.json({ error: 'Internal server error while loading data' }, 500);
+  }
+});
+
+// ========================
+// SUBMISSION LOGGING ROUTES
+// ========================
+
+/**
+ * Log a GHL submission event (from frontend after each client contact is submitted)
+ * Saves detailed logs visible in the admin dashboard Log tool
+ */
+app.post('/make-server-339e423c/submissions/log', async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    let userId = 'anonymous';
+
+    if (accessToken) {
+      const { data: { user }, error } = await supabase.auth.getUser(accessToken);
+      if (!error && user?.id) {
+        userId = user.id;
+      }
+    }
+
+    const body = await c.req.json();
+    const {
+      action,
+      clientName,
+      firmName,
+      contactId,
+      batchId,
+      orderNumber,
+      submissionNumber,
+      success,
+      errorMessage,
+      fieldCount,
+      tags,
+      duration,
+      requestPayload,
+      responseBody,
+      metadata
+    } = body;
+
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      action: action || 'SUBMISSION_LOG',
+      userId,
+      firmName: firmName || '',
+      clientName: clientName || '',
+      contactId: contactId || '',
+      batchId: batchId || '',
+      orderNumber: orderNumber || '',
+      submissionNumber: submissionNumber || '',
+      success: success !== false,
+      errorMessage: errorMessage || '',
+      fieldCount: fieldCount || 0,
+      tags: tags || [],
+      duration: duration || 0,
+      requestPayload: requestPayload || null,
+      responseBody: responseBody || null,
+      metadata: metadata || {}
+    };
+
+    const logKey = `submission_log:${Date.now()}:${Math.random().toString(36).substring(7)}`;
+    await kv.set(logKey, logEntry);
+
+    console.log(`📝 Submission log saved [${action}]: ${clientName || firmName || 'unknown'} — ${success !== false ? '✅' : '❌'}`);
+
+    return c.json({ success: true, logKey });
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error('Error saving submission log:', errMsg);
+    return c.json({ error: 'Failed to save submission log' }, 500);
+  }
+});
+
+/**
+ * Get submission logs (Admin only — powers the Log tool in the admin dashboard)
+ * Supports optional filters: ?action=CLIENT_CONTACT_UPSERT&limit=200
+ */
+app.get('/make-server-339e423c/admin/submission-logs', async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const adminAccount = await kv.get(`account:${user.id}`);
+    if (!adminAccount || adminAccount.role !== 'admin') {
+      return c.json({ error: 'Forbidden: Admin access required' }, 403);
+    }
+
+    const actionFilter = c.req.query('action');
+    const limitParam = parseInt(c.req.query('limit') || '200');
+
+    const allLogs = await kv.getByPrefix('submission_log:');
+
+    const sortedLogs = allLogs.sort((a: any, b: any) => {
+      const timeA = new Date(a.timestamp).getTime();
+      const timeB = new Date(b.timestamp).getTime();
+      return timeB - timeA;
+    });
+
+    let filteredLogs = sortedLogs;
+    if (actionFilter) {
+      filteredLogs = sortedLogs.filter((log: any) => log.action === actionFilter);
+    }
+
+    const limitedLogs = filteredLogs.slice(0, limitParam);
+
+    const successCount = limitedLogs.filter((l: any) => l.success).length;
+    const failureCount = limitedLogs.filter((l: any) => !l.success).length;
+    const avgDuration = limitedLogs.length > 0
+      ? Math.round(limitedLogs.reduce((sum: number, l: any) => sum + (l.duration || 0), 0) / limitedLogs.length)
+      : 0;
+
+    return c.json({
+      success: true,
+      logs: limitedLogs,
+      total: filteredLogs.length,
+      stats: {
+        total: filteredLogs.length,
+        success: successCount,
+        failures: failureCount,
+        avgDurationMs: avgDuration
+      }
+    });
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error('Error fetching submission logs:', errMsg);
+    return c.json({ error: 'Failed to fetch submission logs' }, 500);
+  }
+});
+
+/**
+ * Return GHL API config to authenticated frontend callers.
+ * The API key is a Supabase secret available via Deno.env; the frontend
+ * cannot read Supabase secrets directly, so it fetches them from here.
+ */
+app.get('/make-server-339e423c/ghl/config', async (c) => {
+  try {
+    const accessToken = c.req.header('Authorization')?.split(' ')[1];
+    if (!accessToken) {
+      return c.json({ error: 'No authorization token provided' }, 401);
+    }
+
+    const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+    if (authError || !user?.id) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+
+    const apiKey = Deno.env.get('VITE_HIGHLEVEL_API_KEY') || '';
+    const locationId = Deno.env.get('VITE_HIGHLEVEL_LOCATION_ID') || 'QWhUZ1cxgQgSMFYGloyK';
+
+    return c.json({ apiKey, locationId });
+  } catch (error: unknown) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error('Error returning GHL config:', errMsg);
+    return c.json({ error: 'Failed to retrieve GHL config' }, 500);
   }
 });
 

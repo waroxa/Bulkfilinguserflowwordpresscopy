@@ -8,7 +8,6 @@ import { Alert, AlertDescription } from "./ui/alert";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Download, ChevronDown, Info } from "lucide-react";
 import { Client, PaymentSelection } from "../App";
-import React from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
@@ -321,9 +320,9 @@ export default function Step4ReviewSummary({ clients, onComplete, onBack, onUpda
               </TableRow>
             </TableHeader>
             <TableBody>
-              {clients.map((client) => (
-                <React.Fragment key={client.id}>
-                  <TableRow>
+              {clients.flatMap((client) => {
+                const rows = [
+                  <TableRow key={client.id}>
                     <TableCell>
                       <Checkbox
                         checked={selectedClients.has(client.id)}
@@ -411,7 +410,9 @@ export default function Step4ReviewSummary({ clients, onComplete, onBack, onUpda
                       ) : "—"}
                     </TableCell>
                   </TableRow>
-                  {expandedClients.has(client.id) && (
+                ];
+                if (expandedClients.has(client.id)) {
+                  rows.push(
                     <TableRow key={`${client.id}-details`}>
                       <TableCell colSpan={6} className="bg-gray-50">
                         <div className="p-4 space-y-4">
@@ -631,9 +632,10 @@ export default function Step4ReviewSummary({ clients, onComplete, onBack, onUpda
                         </div>
                       </TableCell>
                     </TableRow>
-                  )}
-                </React.Fragment>
-              ))}
+                  );
+                }
+                return rows;
+              })}
             </TableBody>
           </Table>
         </div>
